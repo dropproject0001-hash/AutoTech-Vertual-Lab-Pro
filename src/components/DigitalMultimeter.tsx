@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MultimeterState, MultimeterMode, EcuPin, BenchComponent } from '../types/ecu';
-import { Volume2, AlertTriangle, ArrowLeftRight, X, Disc, ChevronDown } from 'lucide-react';
+import { Volume2, AlertTriangle, ArrowLeftRight, X, Disc } from 'lucide-react';
 import { playContinuityBeep } from '../utils/audioFeedback';
 
 interface DigitalMultimeterProps {
@@ -20,14 +20,48 @@ interface DigitalMultimeterProps {
   selectedPinId: string | null;
 }
 
+const MODE_EXPLANATIONS: Record<MultimeterMode, { title: string; desc: string; usage: string }> = {
+  V_DC: {
+    title: 'DC Voltage (V DC)',
+    desc: 'Measures steady Direct Current potential difference relative to Ground or reference chassis.',
+    usage: 'Testing ECU power feeds (KL30/KL15), 5V reference rails (TPS/MAP), and ground voltage drops.',
+  },
+  V_AC: {
+    title: 'AC Voltage (V AC~)',
+    desc: 'Measures Alternating Current Root-Mean-Square (RMS) potential difference across active AC signals.',
+    usage: 'Alternator diode AC ripple testing, wheel speed sensors, and Variable Reluctance (VR) crankshaft signals.',
+  },
+  RESISTANCE: {
+    title: 'Resistance (Ω Ohms)',
+    desc: 'Injects an internal test current to measure loop resistance. MUST be used with circuit Power OFF!',
+    usage: 'Sensor thermistor resistance (ECT), injector coil resistance, CAN termination (60Ω), and harness corrosion.',
+  },
+  CONTINUITY: {
+    title: 'Continuity Test (BEEP)',
+    desc: 'Audible continuity test that beeps when loop resistance between probes is below 30 Ω.',
+    usage: 'Verifying solid ground connections, tracing harness continuity, and detecting broken wires.',
+  },
+  FREQUENCY: {
+    title: 'Frequency (Hz / % Duty Cycle)',
+    desc: 'Measures signal switching frequency in Hertz and Pulse-Width Modulation (PWM) duty cycle percentage.',
+    usage: 'Crankshaft/Camshaft Hall sensors, EVAP purge solenoid PWM, and fuel injector driver firing frequency.',
+  },
+  DIODE: {
+    title: 'Diode Junction Test (-▷|-)',
+    desc: 'Measures forward semiconductor PN-junction voltage drop (nominally 0.4V to 0.7V).',
+    usage: 'Testing relay flyback suppression diodes, alternator rectifier bridges, and ECU ESD protection.',
+  },
+};
+
 export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
   multimeter,
   onChange,
   reading,
   pins,
   components,
-  selectedPinId,
 }) => {
+  const [hoveredMode, setHoveredMode] = useState<MultimeterMode | null>(null);
+
   // Beep effect
   useEffect(() => {
     if (multimeter.isPowered && multimeter.mode === 'CONTINUITY' && reading.shouldBeep) {
@@ -85,6 +119,8 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
     ),
   ];
 
+  const activeModeInfo = MODE_EXPLANATIONS[hoveredMode || multimeter.mode];
+
   return (
     <div className="bg-slate-900 border-2 border-amber-600/40 rounded-xl p-3.5 flex flex-col gap-3 shadow-md text-slate-100">
       {/* Top Brand Banner */}
@@ -111,7 +147,7 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
       </div>
 
       {/* High-Contrast LCD Screen */}
-      <div className="bg-[#94a382] border-4 border-slate-950 rounded-lg p-3 text-slate-950 shadow-inner flex flex-col justify-between min-h-[92px]">
+      <div className="bg-[#94a382] border-4 border-slate-950 rounded-lg p-3 text-slate-950 shadow-inner flex flex-col justify-between min-h-[92px] relative group">
         {multimeter.isPowered ? (
           <>
             <div className="flex justify-between items-center text-[10px] font-mono font-bold tracking-wider text-slate-800">
@@ -155,69 +191,131 @@ export const DigitalMultimeter: React.FC<DigitalMultimeterProps> = ({
         </div>
       )}
 
-      {/* Rotary Selector Dial Buttons */}
-      <div className="grid grid-cols-6 gap-1 bg-slate-950 p-1.5 rounded-lg border border-slate-800">
-        <button
-          onClick={() => setMode('V_DC')}
-          className={`py-1.5 text-[10px] font-mono font-semibold rounded transition text-center ${
-            multimeter.mode === 'V_DC'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          V DC
-        </button>
-        <button
-          onClick={() => setMode('V_AC')}
-          className={`py-1.5 text-[10px] font-mono font-semibold rounded transition text-center ${
-            multimeter.mode === 'V_AC'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          V AC~
-        </button>
-        <button
-          onClick={() => setMode('RESISTANCE')}
-          className={`py-1.5 text-[10px] font-mono font-semibold rounded transition text-center ${
-            multimeter.mode === 'RESISTANCE'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          Ω OHM
-        </button>
-        <button
-          onClick={() => setMode('CONTINUITY')}
-          className={`py-1.5 text-[10px] font-mono font-semibold rounded transition text-center flex items-center justify-center gap-1 ${
-            multimeter.mode === 'CONTINUITY'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          <Volume2 className="w-3 h-3" />
-          <span>BEEP</span>
-        </button>
-        <button
-          onClick={() => setMode('FREQUENCY')}
-          className={`py-1.5 text-[10px] font-mono font-semibold rounded transition text-center ${
-            multimeter.mode === 'FREQUENCY'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          Hz / %
-        </button>
-        <button
-          onClick={() => setMode('DIODE')}
-          className={`py-1.5 text-[10px] font-mono font-semibold rounded transition text-center ${
-            multimeter.mode === 'DIODE'
-              ? 'bg-amber-500 text-slate-950 shadow-sm'
-              : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          -▷| -
-        </button>
+      {/* Rotary Selector Dial Buttons with High-Visibility Active State, Keyboard Navigation & Non-Obscuring Lab Tooltips */}
+      <div
+        className="grid grid-cols-6 gap-1.5 bg-slate-950 p-2 rounded-xl border border-slate-800 shadow-inner relative"
+        role="radiogroup"
+        aria-label="Multimeter Measurement Mode Selector (Use Arrow Keys to Navigate)"
+      >
+        {(['V_DC', 'V_AC', 'RESISTANCE', 'CONTINUITY', 'FREQUENCY', 'DIODE'] as MultimeterMode[]).map((modeKey, idx, arr) => {
+          const info = MODE_EXPLANATIONS[modeKey];
+          const isSelected = multimeter.mode === modeKey;
+
+          // Smart horizontal alignment to prevent tooltips from bleeding off-screen or obscuring adjacent cards
+          const tooltipAlignClass =
+            idx === 0
+              ? 'left-0 translate-x-0'
+              : idx === 5
+              ? 'right-0 translate-x-0'
+              : 'left-1/2 -translate-x-1/2';
+
+          const arrowAlignClass =
+            idx === 0
+              ? 'left-4 translate-x-0'
+              : idx === 5
+              ? 'right-4 translate-x-0'
+              : 'left-1/2 -translate-x-1/2';
+
+          const handleKeyDown = (e: React.KeyboardEvent) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+              e.preventDefault();
+              const nextIndex = (idx + 1) % arr.length;
+              setMode(arr[nextIndex]);
+              setHoveredMode(arr[nextIndex]);
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              const prevIndex = (idx - 1 + arr.length) % arr.length;
+              setMode(arr[prevIndex]);
+              setHoveredMode(arr[prevIndex]);
+            } else if (e.key === 'Home') {
+              e.preventDefault();
+              setMode(arr[0]);
+              setHoveredMode(arr[0]);
+            } else if (e.key === 'End') {
+              e.preventDefault();
+              setMode(arr[arr.length - 1]);
+              setHoveredMode(arr[arr.length - 1]);
+            }
+          };
+
+          return (
+            <div key={modeKey} className="relative group/btn flex flex-col items-center">
+              <button
+                role="radio"
+                tabIndex={isSelected ? 0 : -1}
+                aria-checked={isSelected}
+                aria-label={`${info.title} measurement mode. ${info.desc}`}
+                onClick={() => setMode(modeKey)}
+                onMouseEnter={() => setHoveredMode(modeKey)}
+                onMouseLeave={() => setHoveredMode(null)}
+                onFocus={() => setHoveredMode(modeKey)}
+                onBlur={() => setHoveredMode(null)}
+                onKeyDown={handleKeyDown}
+                className={`w-full py-2 px-1 text-[10px] font-mono font-bold rounded-lg transition-all transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-300 flex flex-col items-center justify-center gap-1 ${
+                  isSelected
+                    ? 'bg-gradient-to-b from-amber-300 via-amber-400 to-amber-500 text-slate-950 ring-2 ring-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.6)] font-black scale-[1.03] z-20'
+                    : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 hover:text-amber-400 border border-slate-800'
+                }`}
+              >
+                {/* High-Contrast Active Mode LED Indicator Dot */}
+                <div className="flex items-center gap-1">
+                  <span className={`w-2 h-2 rounded-full transition-all ${isSelected ? 'bg-slate-950 ring-2 ring-slate-900 animate-pulse' : 'bg-slate-700'}`} />
+                </div>
+
+                <span className="flex items-center gap-0.5 whitespace-nowrap tracking-tight">
+                  {modeKey === 'CONTINUITY' && <Volume2 className="w-3 h-3" />}
+                  {modeKey === 'CONTINUITY'
+                    ? 'BEEP'
+                    : modeKey === 'RESISTANCE'
+                    ? 'Ω OHM'
+                    : modeKey === 'FREQUENCY'
+                    ? 'Hz / %'
+                    : modeKey === 'DIODE'
+                    ? '-▷| -'
+                    : modeKey === 'V_AC'
+                    ? 'V AC~'
+                    : 'V DC'}
+                </span>
+              </button>
+
+              {/* Accessible Non-Obscuring Dark Laboratory Hover / Focus Tooltip Popup */}
+              <div
+                role="tooltip"
+                className={`opacity-0 group-hover/btn:opacity-100 group-focus-within/btn:opacity-100 pointer-events-none absolute bottom-full mb-2.5 w-56 bg-slate-950/95 backdrop-blur-md border border-amber-500/80 text-slate-100 text-[10px] p-2.5 rounded-xl shadow-2xl shadow-amber-950/80 z-50 transition-all duration-200 transform translate-y-1 group-hover/btn:translate-y-0 font-sans ${tooltipAlignClass}`}
+              >
+                <div className="font-mono font-bold text-amber-400 border-b border-slate-800/80 pb-1 mb-1.5 flex items-center justify-between">
+                  <span>{info.title}</span>
+                  <span className="text-[9px] text-amber-300 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-700/60 font-mono">
+                    {isSelected ? 'ACTIVE' : 'SELECT'}
+                  </span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-snug mb-1.5">{info.desc}</p>
+                <div className="text-[9.5px] text-cyan-300 font-mono bg-cyan-950/50 border border-cyan-800/60 p-1.5 rounded">
+                  <strong className="text-slate-400">Diagnostic Application:</strong> {info.usage}
+                </div>
+                {/* Tooltip Down Arrow Pointer */}
+                <div className={`absolute top-full -mt-[1px] border-4 border-transparent border-t-amber-500/80 ${arrowAlignClass}`} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Interactive Student Mode Educational Card */}
+      <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-2.5 font-sans text-[11px] flex flex-col gap-1 shadow-inner">
+        <div className="flex items-center justify-between font-mono text-[10px]">
+          <span className="text-amber-400 font-bold tracking-wide uppercase flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            {activeModeInfo.title}
+          </span>
+          <span className="text-slate-400 text-[9px] bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded font-mono">
+            STUDENT LAB GUIDE
+          </span>
+        </div>
+        <p className="text-slate-300 text-[11px] leading-snug">{activeModeInfo.desc}</p>
+        <div className="text-[10px] text-cyan-300 font-mono pt-1 border-t border-slate-800/60 mt-0.5">
+          <strong className="text-slate-400">Diagnostic Application:</strong> {activeModeInfo.usage}
+        </div>
       </div>
 
       {/* Probes Lead Jacks & Connection Terminal Controls */}

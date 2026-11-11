@@ -20,6 +20,7 @@ import { FaultInjector } from './components/FaultInjector';
 import { WiringCanvas } from './components/WiringCanvas';
 import { Oscilloscope } from './components/Oscilloscope';
 import { SchematicPcbScanner } from './components/SchematicPcbScanner';
+import { EcuConnectorPinouts } from './components/EcuConnectorPinouts';
 import {
   Zap,
   Activity,
@@ -33,7 +34,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 
-type LabTab = 'BENCH_LAB' | 'WIRING_DIAGRAM' | 'OSCILLOSCOPE' | 'PCB_SCANNER';
+type LabTab = 'BENCH_LAB' | 'WIRING_DIAGRAM' | 'ECU_PINOUT' | 'OSCILLOSCOPE' | 'PCB_SCANNER';
 type RackFilter = 'ALL' | 'DMM_POWER' | 'FAULT_MATRIX';
 
 export default function App() {
@@ -195,6 +196,16 @@ export default function App() {
             Harness Wiring
           </button>
           <button
+            onClick={() => setActiveTab('ECU_PINOUT')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
+              activeTab === 'ECU_PINOUT'
+                ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            ECU Pinouts & Socket
+          </button>
+          <button
             onClick={() => setActiveTab('OSCILLOSCOPE')}
             className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
               activeTab === 'OSCILLOSCOPE'
@@ -339,6 +350,7 @@ export default function App() {
               }}
               onUpdateComponentState={handleUpdateComponentState}
               isPowerOn={powerSupply.isOutputEnabled}
+              onOpenEcuPinouts={() => setActiveTab('ECU_PINOUT')}
             />
           </div>
         )}
@@ -366,11 +378,33 @@ export default function App() {
               }}
               onUpdateComponentState={handleUpdateComponentState}
               isPowerOn={powerSupply.isOutputEnabled}
+              onOpenEcuPinouts={() => setActiveTab('ECU_PINOUT')}
             />
           </div>
         )}
 
-        {/* TAB 3: OSCILLOSCOPE */}
+        {/* TAB 3: ECU CONNECTOR & BENCH TEST PINOUTS */}
+        {activeTab === 'ECU_PINOUT' && (
+          <div className="flex-1 flex overflow-hidden">
+            <EcuConnectorPinouts
+              pins={pins}
+              nodeVoltages={circuitSolution.nodeVoltages}
+              selectedPinId={selectedPinId}
+              onSelectPin={setSelectedPinId}
+              multimeter={multimeter}
+              onAttachProbe={(color, pinId, label) => {
+                if (color === 'red') {
+                  setMultimeter(prev => ({ ...prev, redProbe: { attachedToPinId: pinId, attachedLabel: label } }));
+                } else {
+                  setMultimeter(prev => ({ ...prev, blackProbe: { attachedToPinId: pinId, attachedLabel: label } }));
+                }
+              }}
+              powerSupply={powerSupply}
+            />
+          </div>
+        )}
+
+        {/* TAB 4: OSCILLOSCOPE */}
         {activeTab === 'OSCILLOSCOPE' && (
           <div className="flex-1 flex flex-col gap-3 overflow-hidden">
             <Oscilloscope

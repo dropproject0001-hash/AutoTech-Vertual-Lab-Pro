@@ -1,4 +1,15 @@
-import { EcuPin, FaultType, InjectedFault, WireConnection, BenchComponent, MultimeterState, PowerSupplyState, DiagnosticTroubleCode } from '../types/ecu';
+import {
+  EcuPin,
+  InjectedFault,
+  WireConnection,
+  BenchComponent,
+  MultimeterState,
+  PowerSupplyState,
+  DiagnosticTroubleCode,
+} from '../types/ecu';
+import { CircuitNetwork } from '../simulation/electrical/CircuitNetwork';
+import { AutomotiveModels } from '../simulation/components/AutomotiveModels';
+import { FaultManager } from '../simulation/faults/FaultManager';
 
 export const DEFAULT_ECU_PINS: EcuPin[] = [
   { id: 'ecu-pin-1', pinNumber: 1, label: 'KL31', name: 'Power Ground 1', category: 'ground', nominalVoltage: 0.0, internalResistance: 0.08, description: 'Chassis/Engine Ground Return' },
@@ -134,6 +145,9 @@ export interface CircuitSolution {
   };
 }
 
+/**
+ * solveCircuit: Solves the entire physical electrical lab using Modified Nodal Analysis (MNA).
+ */
 export function solveCircuit(
   powerSupply: PowerSupplyState,
   pins: EcuPin[],
@@ -142,521 +156,357 @@ export function solveCircuit(
   components: BenchComponent[],
   multimeter: MultimeterState
 ): CircuitSolution {
-  const nodeVoltages: Record<string, number> = {};
-  const nodeResistances: Record<string, number> = {};
-  const wireCurrentsMa: Record<string, number> = {};
-  const dtcs: DiagnosticTroubleCode[] = [];
+  const net = new CircuitNetwork();
 
   const isPowerOn = powerSupply.isOutputEnabled && powerSupply.voltageSetting > 0.4;
   const vSupply = isPowerOn ? powerSupply.voltageSetting : 0.0;
 
-  // Build connected node clusters
-  const getConnectedPinIds = (startPinId: string): string[] => {
-    const visited = new Set<string>([startPinId]);
-    const queue = [startPinId];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      wires.forEach(w => {
-        if (!w.isCut) {
-          if (w.sourcePinId === current && !visited.has(w.targetPinId)) {
-            visited.add(w.targetPinId);
-            queue.push(w.targetPinId);
-          } else if (w.targetPinId === current && !visited.has(w.sourcePinId)) {
-            visited.add(w.sourcePinId);
-            queue.push(w.sourcePinId);
-          }
-        }
-      });
-    }
-    return Array.from(visited);
-  };
-
-  // Reference rails
-  nodeVoltages['chassis-gnd'] = 0.0;
-  nodeVoltages['bench-vbat'] = vSupply;
-  nodeVoltages['bench-gnd'] = 0.0;
-  nodeResistances['chassis-gnd'] = 0.02;
-  nodeResistances['bench-vbat'] = 0.05;
-  nodeResistances['bench-gnd'] = 0.02;
-
-  // Base ECU Pin Voltages
-  pins.forEach(pin => {
-    let baseV = 0.0;
-    let baseR = 1000000;
-
-    if (!isPowerOn) {
-      baseV = 0.0;
-      if (pin.category === 'ground') baseR = pin.internalResistance;
-      else if (pin.category === 'power') baseR = 1200;
-      else if (pin.id === 'ecu-pin-5') baseR = 4700;
-      else if (pin.id === 'ecu-pin-9') baseR = 2200;
-      else if (pin.id === 'ecu-pin-13' || pin.id === 'ecu-pin-14') baseR = 60;
-      else baseR = 47000;
-    } else {
-      if (pin.category === 'ground') {
-        baseV = 0.0;
-        baseR = pin.internalResistance;
-      } else if (pin.id === 'ecu-pin-3' || pin.id === 'ecu-pin-4') {
-        baseV = vSupply;
-        baseR = 1200;
-      } else if (pin.id === 'ecu-pin-5') {
-        baseV = vSupply >= 6.5 ? 5.0 : Math.max(0, vSupply - 1.2);
-        baseR = 4700;
-      } else if (pin.id === 'ecu-pin-6') {
-        baseV = 0.01;
-        baseR = 0.35;
-      } else if (pin.id === 'ecu-pin-7') {
-        const tpsComp = components.find(c => c.id === 'comp-tps');
-        const angle = (tpsComp?.state?.throttleAnglePercent as number) ?? 20;
-        baseV = 0.5 + (angle / 100) * 4.0;
-        baseR = 2500;
-      } else if (pin.id === 'ecu-pin-8') {
-        const mapComp = components.find(c => c.id === 'comp-map');
-        const kpa = (mapComp?.state?.pressureKpa as number) ?? 42;
-        baseV = 0.8 + ((kpa - 20) / 80) * 3.7;
-        baseR = 3200;
-      } else if (pin.id === 'ecu-pin-9') {
-        const ectComp = components.find(c => c.id === 'comp-ect');
-        const temp = (ectComp?.state?.tempCelsius as number) ?? 85;
-        const rNtc = Math.max(50, 2500 * Math.exp(-0.03 * (temp - 20)));
-        baseV = (5.0 * rNtc) / (2200 + rNtc);
-        baseR = (2200 * rNtc) / (2200 + rNtc);
-      } else if (pin.id === 'ecu-pin-10') {
-        baseV = vSupply;
-        baseR = 12.5;
-      } else if (pin.id === 'ecu-pin-13') {
-        baseV = 2.5 + 0.95;
-        baseR = 60;
-      } else if (pin.id === 'ecu-pin-14') {
-        baseV = 2.5 - 0.95;
-        baseR = 60;
-      } else if (pin.id === 'ecu-pin-15') {
-        // Oxygen Sensor closed loop simulation: 0.45V nominal
-        baseV = 0.45;
-        baseR = 100000;
-      } else {
-        baseV = pin.nominalVoltage;
-        baseR = 10000;
-      }
-    }
-
-    nodeVoltages[pin.id] = baseV;
-    nodeResistances[pin.id] = baseR;
-  });
-
-  // Propagate to components
-  components.forEach(comp => {
-    comp.pins.forEach(cp => {
-      const connected = getConnectedPinIds(cp.id);
-      let resolvedV = 0.0;
-      let resolvedR = 1000000;
-
-      for (const otherId of connected) {
-        if (nodeVoltages[otherId] !== undefined) {
-          resolvedV = nodeVoltages[otherId];
-          resolvedR = nodeResistances[otherId] || 1000000;
-          break;
-        }
-      }
-
-      if (cp.id === 'inj-vbat' || cp.id === 'relay-30' || cp.id === 'relay-86') {
-        resolvedV = vSupply;
-        resolvedR = 0.1;
-      }
-
-      nodeVoltages[cp.id] = resolvedV;
-      nodeResistances[cp.id] = resolvedR;
-    });
-  });
-
-  // Calculate total supply current
-  let totalCurrentDrawAmps = 0.0;
+  // 1. Stamp Laboratory Power Supply
   if (isPowerOn) {
-    totalCurrentDrawAmps = 0.19 + (vSupply / 12.6) * 0.08;
-    // Injector load
-    const injConnected = getConnectedPinIds('inj-ctrl');
-    if (injConnected.includes('ecu-pin-10')) {
-      totalCurrentDrawAmps += (vSupply / 12.5) * 0.18; // 180mA average PWM draw
-    }
-    // Relay coil load
-    totalCurrentDrawAmps += vSupply / 85; // ~148mA
-  }
-
-  // Apply Injected Electrical Faults
-  faults.forEach(fault => {
-    const pin = pins.find(p => p.id === fault.pinId);
-    if (!pin) return;
-
-    const affected = getConnectedPinIds(pin.id);
-
-    if (fault.faultType === 'OPEN_CIRCUIT') {
-      affected.forEach(pId => {
-        if (pId === pin.id) {
-          if (pin.category === 'sensor_in') {
-            nodeVoltages[pId] = 0.01;
-            nodeResistances[pId] = 10000000;
-          }
-        }
-      });
-
-      if (pin.id === 'ecu-pin-5') {
-        dtcs.push({
-          code: 'P0641',
-          system: 'Sensor Reference Voltage A',
-          description: 'Sensor Reference Voltage "A" Circuit Open (5V Rail Dropped)',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-7') {
-        dtcs.push({
-          code: 'P0122',
-          system: 'Throttle Position Sensor',
-          description: 'TPS Circuit Low Input / Open Circuit Detected',
-          severity: 'WARNING',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-10') {
-        dtcs.push({
-          code: 'P0201',
-          system: 'Fuel Metering',
-          description: 'Cylinder 1 Injector Circuit / Open',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-13' || pin.id === 'ecu-pin-14') {
-        dtcs.push({
-          code: 'U0001',
-          system: 'CAN Communication Network',
-          description: 'High Speed CAN Communication Bus Open Circuit',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      }
-    } else if (fault.faultType === 'SHORT_TO_GND') {
-      affected.forEach(pId => {
-        nodeVoltages[pId] = 0.00;
-        nodeResistances[pId] = 0.04;
-      });
-
-      if (pin.category === 'power' || pin.id === 'ecu-pin-3' || pin.id === 'ecu-pin-5') {
-        totalCurrentDrawAmps += 7.8;
-        dtcs.push({
-          code: 'P0562',
-          system: 'System Power Supply',
-          description: 'System Voltage Low / Dead Short to Ground on Power Rail',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-7') {
-        dtcs.push({
-          code: 'P0122',
-          system: 'Throttle Position Sensor',
-          description: 'TPS Signal Shorted to Chassis Ground (0.00V detected)',
-          severity: 'WARNING',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-8') {
-        dtcs.push({
-          code: 'P0107',
-          system: 'Manifold Absolute Pressure',
-          description: 'MAP Sensor Circuit Low Input (Shorted to Ground)',
-          severity: 'WARNING',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-13' || pin.id === 'ecu-pin-14') {
-        dtcs.push({
-          code: 'U0001',
-          system: 'CAN Network',
-          description: 'High Speed CAN Bus Line Shorted to Chassis Ground',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      }
-    } else if (fault.faultType === 'SHORT_TO_VBAT') {
-      affected.forEach(pId => {
-        nodeVoltages[pId] = vSupply;
-        nodeResistances[pId] = 0.2;
-      });
-
-      if (pin.id === 'ecu-pin-7') {
-        dtcs.push({
-          code: 'P0123',
-          system: 'Throttle Position Sensor',
-          description: 'TPS Signal High Input (Shorted to Battery +12V)',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-5') {
-        dtcs.push({
-          code: 'P0653',
-          system: 'Sensor Reference Voltage B',
-          description: 'Sensor Reference Voltage Circuit High (+12V Overvoltage on 5V bus)',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-10') {
-        dtcs.push({
-          code: 'P0261',
-          system: 'Injector Driver',
-          description: 'Cylinder 1 Injector Circuit Shorted to Battery Rail',
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      }
-    } else if (fault.faultType.startsWith('HIGH_RESISTANCE')) {
-      const addedR = fault.faultType === 'HIGH_RESISTANCE_50R' ? 50 : fault.faultType === 'HIGH_RESISTANCE_250R' ? 250 : 1000;
-      affected.forEach(pId => {
-        nodeResistances[pId] = (nodeResistances[pId] || 0) + addedR;
-        if (pin.category === 'sensor_in') {
-          nodeVoltages[pId] = (nodeVoltages[pId] || 1.0) * (addedR > 200 ? 0.42 : 0.84);
-        } else if (pin.category === 'power') {
-          nodeVoltages[pId] = Math.max(0, (nodeVoltages[pId] || 12.0) - (0.5 * addedR * 0.04));
-        }
-      });
-
-      if (pin.id === 'ecu-pin-7') {
-        dtcs.push({
-          code: 'P0121',
-          system: 'Throttle Position Sensor',
-          description: `TPS Range/Performance Defect (+${addedR}Ω Harness Resistance)`,
-          severity: 'WARNING',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      } else if (pin.id === 'ecu-pin-1') {
-        dtcs.push({
-          code: 'P0560',
-          system: 'System Power & Ground',
-          description: `Main Ground Pin Fretting Corrosion (+${addedR}Ω Resistance)`,
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          associatedPinIds: [pin.id],
-        });
-      }
-    }
-  });
-
-  // Calculate live wire currents
-  wires.forEach(w => {
-    if (w.isCut) {
-      wireCurrentsMa[w.id] = 0.0;
-      return;
-    }
-    const v1 = nodeVoltages[w.sourcePinId] ?? 0.0;
-    const v2 = nodeVoltages[w.targetPinId] ?? 0.0;
-    const delta = Math.abs(v1 - v2);
-
-    let cur = 0.0;
-    if (w.id === 'wire-1' || w.id === 'wire-4') cur = 18.5; // 5V sensor draw
-    else if (w.id === 'wire-2') cur = 1.2; // ADC signal current
-    else if (w.id === 'wire-9') cur = isPowerOn ? 180.0 : 0.0; // Injector sink pulse
-    else if (w.id === 'wire-10' || w.id === 'wire-11') cur = isPowerOn ? 25.0 : 0.0; // CAN termination current
-    else cur = (delta / Math.max(1, w.resistance)) * 1000;
-
-    wireCurrentsMa[w.id] = parseFloat(cur.toFixed(1));
-  });
-
-  // Handle cut wires DTCs
-  wires.forEach(w => {
-    if (w.isCut) {
-      if (w.id === 'wire-2') {
-        dtcs.push({
-          code: 'P0122',
-          system: 'Throttle Position Sensor',
-          description: 'TPS Signal Wire Cut (Open Circuit)',
-          severity: 'WARNING',
-          status: 'ACTIVE',
-          associatedPinIds: ['ecu-pin-7'],
-        });
-        nodeVoltages['ecu-pin-7'] = 0.01;
-      } else if (w.id === 'wire-1') {
-        dtcs.push({
-          code: 'P0122',
-          system: 'Sensor Power',
-          description: 'TPS Sensor 5V Supply Wire Cut',
-          severity: 'WARNING',
-          status: 'ACTIVE',
-          associatedPinIds: ['ecu-pin-5'],
-        });
-        nodeVoltages['tps-vcc'] = 0.0;
-        nodeVoltages['tps-sig'] = 0.0;
-        nodeVoltages['ecu-pin-7'] = 0.0;
-      }
-    }
-  });
-
-  // Current limit trip
-  const isSupplyCurrentTripped = totalCurrentDrawAmps > powerSupply.currentLimit;
-  if (isSupplyCurrentTripped) {
-    totalCurrentDrawAmps = powerSupply.currentLimit;
-    Object.keys(nodeVoltages).forEach(k => {
-      if (nodeVoltages[k] > 0.5) nodeVoltages[k] *= 0.12;
-    });
-  }
-
-  // Multimeter reading resolution
-  const redPin = multimeter.redProbe.attachedToPinId;
-  const blackPin = multimeter.blackProbe.attachedToPinId;
-
-  let mmDisplay = '0.000';
-  let mmValue = 0.0;
-  let mmUnit = 'V DC';
-  let isOverLimit = false;
-  let isWarning = false;
-  let warningMessage: string | undefined = undefined;
-  let shouldBeep = false;
-
-  const getVoltage = (id: string | null) => (id && nodeVoltages[id] !== undefined ? nodeVoltages[id] : 0.0);
-  const getResistance = (id: string | null) => (id && nodeResistances[id] !== undefined ? nodeResistances[id] : 10000000);
-
-  if (!redPin && !blackPin) {
-    mmDisplay = '---.-';
-    mmValue = 0;
-    mmUnit = '';
-  } else if (!redPin || !blackPin) {
-    if (multimeter.mode === 'V_DC' || multimeter.mode === 'V_AC') {
-      mmValue = 0.002;
-      mmDisplay = '0.002';
-      mmUnit = 'V';
-      isWarning = true;
-      warningMessage = 'Connect both Red (+) and Black (-) COM probes to take differential measurement.';
-    } else {
-      mmDisplay = 'O.L';
-      mmValue = 9999999;
-      mmUnit = 'Ω';
-      isOverLimit = true;
-    }
+    net.addVoltageSource('bench-vsource', 'bench-vbat', 'chassis-gnd', vSupply, 0.02);
   } else {
-    const vRed = getVoltage(redPin);
-    const vBlack = getVoltage(blackPin);
+    net.addResistor('bench-off-bleed', 'bench-vbat', 'chassis-gnd', 1e6);
+  }
+
+  // 2. Stamp ECU Ground & Power Rails
+  // Pin 1 & Pin 2: Ground returns to Chassis Ground
+  net.addResistor('ecu-gnd-1', 'ecu-pin-1', 'chassis-gnd', 0.08);
+  net.addResistor('ecu-gnd-2', 'ecu-pin-2', 'chassis-gnd', 0.08);
+
+  // Pin 3 (KL30) & Pin 4 (KL15): Internal ECU quiescent load
+  net.addResistor('ecu-kl30-load', 'ecu-pin-3', 'chassis-gnd', 1200);
+  net.addResistor('ecu-kl15-load', 'ecu-pin-4', 'chassis-gnd', 1200);
+
+  // Pin 6: Sensor clean ground plane
+  net.addResistor('ecu-sgnd-plane', 'ecu-pin-6', 'chassis-gnd', 0.35);
+
+  // Pin 5: Regulated +5.00V Sensor Reference Supply Rail (Internal LDO)
+  if (isPowerOn && vSupply >= 6.5) {
+    net.addVoltageSource('ecu-vref-ldo', 'ecu-pin-5', 'chassis-gnd', 5.0, 8.5);
+  } else if (isPowerOn && vSupply > 1.5) {
+    // Dropout mode
+    net.addVoltageSource('ecu-vref-ldo', 'ecu-pin-5', 'chassis-gnd', Math.max(0, vSupply - 1.2), 8.5);
+  } else {
+    net.addResistor('ecu-vref-off', 'ecu-pin-5', 'chassis-gnd', 4700);
+  }
+
+  // Pin 9 (ECT ADC input with internal 2.2kΩ pull-up to +5V VREF)
+  net.addResistor('ecu-ect-pullup', 'ecu-pin-5', 'ecu-pin-9', 2200);
+
+  // Pin 7 & Pin 8 (ADC input buffers with 47kΩ internal impedance)
+  net.addResistor('ecu-tps-adc', 'ecu-pin-7', 'chassis-gnd', 47000);
+  net.addResistor('ecu-map-adc', 'ecu-pin-8', 'chassis-gnd', 47000);
+
+  // Pin 13 & Pin 14: ECU High-Speed CAN Bus termination (120Ω between CAN-H and CAN-L)
+  net.addResistor('ecu-can-termination', 'ecu-pin-13', 'ecu-pin-14', 120.0);
+  // CAN Transceiver recessive biasing to 2.5V
+  if (isPowerOn) {
+    net.addVoltageSource('can-h-bias', 'ecu-pin-13', 'chassis-gnd', 2.5, 60.0);
+    net.addVoltageSource('can-l-bias', 'ecu-pin-14', 'chassis-gnd', 2.5, 60.0);
+  }
+
+  // 3. Stamp Components into Network
+  const tpsComp = components.find(c => c.id === 'comp-tps');
+  const angle = (tpsComp?.state?.throttleAnglePercent as number) ?? 20;
+  const tpsModel = AutomotiveModels.calculateTps(angle, 5.0);
+  net.addResistor('tps-upper', 'tps-vcc', 'tps-sig', tpsModel.rUpper);
+  net.addResistor('tps-lower', 'tps-sig', 'tps-gnd', tpsModel.rLower);
+
+  const ectComp = components.find(c => c.id === 'comp-ect');
+  const temp = (ectComp?.state?.tempCelsius as number) ?? 85;
+  const ectModel = AutomotiveModels.calculateEct(temp, 5.0);
+  net.addResistor('ect-ntc', 'ect-sig', 'ect-gnd', ectModel.resistanceOhms);
+
+  const mapComp = components.find(c => c.id === 'comp-map');
+  const kpa = (mapComp?.state?.pressureKpa as number) ?? 42;
+  const mapModel = AutomotiveModels.calculateMap(kpa, 5.0);
+  // Model MAP sensor as thevenin equivalent output
+  net.addVoltageSource('map-transducer', 'map-sig', 'map-gnd', isPowerOn ? mapModel.voltage : 0.0, 150);
+  net.addResistor('map-vcc-load', 'map-vcc', 'map-gnd', 3500);
+
+  // Injector Solenoid
+  net.addResistor('inj-coil', 'inj-vbat', 'inj-ctrl', 12.5);
+  // Injector low-side driver sink (switches to ground when ECU pulses)
+  if (isPowerOn) {
+    net.addResistor('inj-lowside-driver', 'ecu-pin-10', 'chassis-gnd', 0.15);
+  }
+
+  // Main System Relay
+  net.addResistor('relay-coil', 'relay-86', 'relay-85', 85.0);
+  net.addResistor('relay-contacts', 'relay-30', 'relay-87', 0.05);
+
+  // Cluster CAN Terminator (120Ω)
+  net.addResistor('cluster-can-term', 'can-term-h', 'can-term-l', 120.0);
+
+  // 4. Stamp Harness Wires
+  for (const wire of wires) {
+    if (!wire.isCut) {
+      net.addResistor(`wire-${wire.id}`, wire.sourcePinId, wire.targetPinId, wire.resistance || 0.05);
+    } else {
+      // Cut wire creates open circuit ($10^9\,\Omega$)
+      net.addResistor(`wire-${wire.id}`, wire.sourcePinId, wire.targetPinId, 1e9);
+    }
+  }
+
+  // 5. Apply Faults via Topological FaultManager
+  FaultManager.applyFaults(net, faults);
+
+  // 6. Solve Network using MNA
+  const solution = net.solve();
+  const nodeVoltages = solution.nodeVoltages;
+  const wireCurrentsMa: Record<string, number> = {};
+
+  for (const wire of wires) {
+    const iA = Math.abs(solution.branchCurrentsAmps[`wire-${wire.id}`] || 0);
+    wireCurrentsMa[wire.id] = iA * 1000.0;
+  }
+
+  // Check Power Supply Current Limit Trip
+  const supplyCurrentDraw = solution.sourceCurrentDrawAmps;
+  const isSupplyCurrentTripped = isPowerOn && supplyCurrentDraw > powerSupply.currentLimit;
+
+  // Compute Node Resistances for UI
+  const nodeResistances: Record<string, number> = {};
+  for (const p of pins) {
+    nodeResistances[p.id] = p.internalResistance;
+  }
+
+  // 7. Calculate Real Multimeter Measurement
+  const redNode = multimeter.redProbe.attachedToPinId?.toLowerCase() || null;
+  const blackNode = multimeter.blackProbe.attachedToPinId?.toLowerCase() || null;
+
+  let dmmDisplay = '0.00';
+  let dmmVal = 0.0;
+  let dmmUnit = 'V';
+  let dmmOverLimit = false;
+  let dmmWarning = false;
+  let dmmWarningMsg = '';
+  let dmmShouldBeep = false;
+
+  if (!multimeter.isPowered) {
+    dmmDisplay = 'OFF';
+    dmmUnit = '';
+  } else if (!redNode || !blackNode) {
+    dmmDisplay = '---';
+    dmmUnit = '';
+  } else {
+    const vRed = nodeVoltages[redNode] !== undefined ? nodeVoltages[redNode] : 0.0;
+    const vBlack = nodeVoltages[blackNode] !== undefined ? nodeVoltages[blackNode] : 0.0;
     const deltaV = vRed - vBlack;
 
-    if (multimeter.mode === 'V_DC') {
-      mmValue = deltaV;
-      mmUnit = 'V';
-      mmDisplay = deltaV.toFixed(3);
-    } else if (multimeter.mode === 'V_AC') {
-      const isPwm = redPin.includes('inj') || redPin.includes('can');
-      const ripple = isPwm ? 0.88 : isPowerOn ? 0.024 : 0.001;
-      mmValue = ripple;
-      mmUnit = 'V~';
-      mmDisplay = ripple.toFixed(3);
-    } else if (multimeter.mode === 'RESISTANCE') {
-      if (isPowerOn && (vRed > 0.5 || vBlack > 0.5)) {
-        isWarning = true;
-        warningMessage = 'LIVE VOLTAGE DETECTED! Turn OFF power supply to measure resistance and protect meter fuse.';
-        mmDisplay = 'ERR.V';
-        mmValue = 0;
-        mmUnit = 'Ω';
-      } else {
-        const r1 = getResistance(redPin);
-        const r2 = getResistance(blackPin);
-        let netR = 0.0;
+    switch (multimeter.mode) {
+      case 'V_DC': {
+        dmmVal = deltaV;
+        const absV = Math.abs(deltaV);
+        if (absV >= 1000) {
+          dmmDisplay = (deltaV / 1000).toFixed(2);
+          dmmUnit = 'kV DC';
+        } else if (absV >= 1.0 || absV === 0) {
+          dmmDisplay = deltaV.toFixed(2);
+          dmmUnit = 'V DC';
+        } else {
+          dmmDisplay = (deltaV * 1000).toFixed(1);
+          dmmUnit = 'mV DC';
+        }
+        break;
+      }
 
-        if (redPin === blackPin) {
-          netR = 0.02;
-        } else if ((redPin === 'ecu-pin-1' && blackPin === 'chassis-gnd') || (blackPin === 'ecu-pin-1' && redPin === 'chassis-gnd')) {
-          netR = r1 + 0.02;
-        } else if ((redPin === 'ecu-pin-13' && blackPin === 'ecu-pin-14') || (redPin === 'can-term-h' && blackPin === 'can-term-l')) {
-          netR = 60.1;
-        } else if (redPin.includes('inj') && blackPin.includes('inj')) {
-          netR = 12.5;
+      case 'V_AC': {
+        // High-speed alternating / ripple voltage component
+        const hasCanSignal = (redNode.includes('can') || blackNode.includes('can'));
+        const acRms = hasCanSignal ? 0.707 * 1.0 : Math.abs(deltaV * 0.02);
+        dmmVal = acRms;
+        if (acRms >= 1000) {
+          dmmDisplay = (acRms / 1000).toFixed(2);
+          dmmUnit = 'kV AC';
+        } else if (acRms >= 1.0 || acRms === 0) {
+          dmmDisplay = acRms.toFixed(3);
+          dmmUnit = 'V AC';
         } else {
-          netR = Math.abs(r1 - r2) + 0.12;
-          if (netR > 500000) netR = 9999999;
+          dmmDisplay = (acRms * 1000).toFixed(1);
+          dmmUnit = 'mV AC';
         }
+        break;
+      }
 
-        mmValue = netR;
-        if (netR >= 2000000) {
-          mmDisplay = 'O.L';
-          isOverLimit = true;
-          mmUnit = 'MΩ';
-        } else if (netR >= 1000) {
-          mmDisplay = (netR / 1000).toFixed(2);
-          mmUnit = 'kΩ';
+      case 'RESISTANCE': {
+        const vRed = Math.abs(nodeVoltages[redNode] ?? 0);
+        const vBlack = Math.abs(nodeVoltages[blackNode] ?? 0);
+        const isLiveCircuit = isPowerOn && (Math.abs(deltaV) > 0.1 || vRed > 0.3 || vBlack > 0.3);
+
+        if (isLiveCircuit) {
+          dmmWarning = true;
+          dmmWarningMsg = 'VOLTAGE DETECTED ON LIVE CIRCUIT! Turn bench power supply OFF for accurate Ohms measurement.';
+          dmmDisplay = 'ERR';
+          dmmUnit = 'Ω';
         } else {
-          mmDisplay = netR.toFixed(1);
-          mmUnit = 'Ω';
+          const rEq = net.calculateEquivalentResistance(redNode, blackNode);
+          dmmVal = rEq;
+          if (rEq >= 1e8 || !isFinite(rEq)) {
+            dmmDisplay = 'O.L';
+            dmmUnit = 'MΩ';
+            dmmOverLimit = true;
+          } else if (rEq >= 1e6) {
+            dmmDisplay = (rEq / 1e6).toFixed(2);
+            dmmUnit = 'MΩ';
+          } else if (rEq >= 1000) {
+            dmmDisplay = (rEq / 1000.0).toFixed(2);
+            dmmUnit = 'kΩ';
+          } else if (rEq >= 1.0 || rEq === 0) {
+            dmmDisplay = rEq.toFixed(1);
+            dmmUnit = 'Ω';
+          } else {
+            // Sub-ohm wire lead or contact resistance scaled to milliohms
+            dmmDisplay = (rEq * 1000.0).toFixed(1);
+            dmmUnit = 'mΩ';
+          }
         }
+        break;
       }
-    } else if (multimeter.mode === 'CONTINUITY') {
-      if (isPowerOn && (vRed > 0.5 || vBlack > 0.5)) {
-        isWarning = true;
-        warningMessage = 'CIRCUIT ENERGIZED! Turn OFF power supply before continuity test.';
-        mmDisplay = 'ERR.V';
-      } else {
-        const isDirect = redPin === blackPin || getConnectedPinIds(redPin).includes(blackPin);
-        const netR = isDirect ? 0.04 : 9999999;
-        mmValue = netR;
-        if (netR < 30) {
-          mmDisplay = netR.toFixed(1);
-          mmUnit = 'Ω';
-          shouldBeep = true;
+
+      case 'CONTINUITY': {
+        const rCont = net.calculateEquivalentResistance(redNode, blackNode);
+        dmmVal = rCont;
+        if (rCont < 30.0) {
+          dmmShouldBeep = true;
+          if (rCont < 1.0 && rCont > 0) {
+            dmmDisplay = (rCont * 1000).toFixed(0);
+            dmmUnit = 'mΩ';
+          } else {
+            dmmDisplay = rCont.toFixed(1);
+            dmmUnit = 'Ω';
+          }
+        } else if (rCont >= 1e6 || !isFinite(rCont)) {
+          dmmDisplay = 'O.L';
+          dmmUnit = 'Ω';
+          dmmOverLimit = true;
+        } else if (rCont >= 1000) {
+          dmmDisplay = (rCont / 1000.0).toFixed(2);
+          dmmUnit = 'kΩ';
         } else {
-          mmDisplay = 'O.L';
-          isOverLimit = true;
-          mmUnit = 'Ω';
+          dmmDisplay = rCont.toFixed(1);
+          dmmUnit = 'Ω';
         }
+        break;
       }
-    } else if (multimeter.mode === 'FREQUENCY') {
-      if (isPowerOn && (redPin.includes('inj') || redPin.includes('ign'))) {
-        mmValue = 50.0;
-        mmDisplay = '50.00';
-        mmUnit = 'Hz';
-      } else if (isPowerOn && (redPin.includes('can') || blackPin.includes('can'))) {
-        mmValue = 500000;
-        mmDisplay = '500.0';
-        mmUnit = 'kHz';
-      } else {
-        mmValue = 0.0;
-        mmDisplay = '0.00';
-        mmUnit = 'Hz';
-      }
-    } else if (multimeter.mode === 'DIODE') {
-      if (isPowerOn) {
-        mmDisplay = 'ERR.V';
-        isWarning = true;
-        warningMessage = 'Turn OFF circuit power for diode voltage drop test.';
-      } else {
-        if (redPin.includes('vcc') || redPin.includes('5v') || redPin.includes('vbat')) {
-          mmValue = 0.624;
-          mmDisplay = '0.624';
-          mmUnit = 'V';
+
+      case 'DIODE': {
+        // Standard forward diode drop check
+        dmmVal = Math.abs(deltaV);
+        if (Math.abs(deltaV) > 0.4 && Math.abs(deltaV) < 0.85) {
+          dmmDisplay = Math.abs(deltaV).toFixed(3);
+          dmmUnit = 'V';
+        } else if (Math.abs(deltaV) < 0.05) {
+          dmmDisplay = (Math.abs(deltaV) * 1000).toFixed(1);
+          dmmUnit = 'mV (SHORT)';
         } else {
-          mmDisplay = 'O.L';
-          isOverLimit = true;
-          mmUnit = 'V';
+          dmmDisplay = 'O.L';
+          dmmUnit = 'V';
+          dmmOverLimit = true;
         }
+        break;
+      }
+
+      case 'FREQUENCY': {
+        const isCanBus = redNode.includes('can') || blackNode.includes('can');
+        const isInj = redNode.includes('inj') || blackNode.includes('inj');
+        let hz = 0;
+        if (isCanBus && isPowerOn) {
+          hz = 25000;
+        } else if (isInj && isPowerOn) {
+          hz = 20;
+        }
+        dmmVal = hz;
+
+        if (hz >= 1e6) {
+          dmmDisplay = (hz / 1e6).toFixed(2);
+          dmmUnit = 'MHz';
+        } else if (hz >= 1000) {
+          dmmDisplay = (hz / 1000.0).toFixed(1);
+          dmmUnit = 'kHz';
+        } else {
+          dmmDisplay = hz.toFixed(1);
+          dmmUnit = 'Hz';
+        }
+        break;
       }
     }
+  }
+
+  // 8. Generate Active OBD-II Diagnostic Trouble Codes (DTCs) from Actual Simulated Voltages
+  const dtcs: DiagnosticTroubleCode[] = [];
+
+  const tpsVoltage = nodeVoltages['ecu-pin-7'] !== undefined ? nodeVoltages['ecu-pin-7'] : 0.85;
+  if (isPowerOn && tpsVoltage < 0.20) {
+    dtcs.push({
+      code: 'P0122',
+      system: 'Throttle Position Sensor',
+      description: 'Throttle Position Sensor (G79) Circuit Low Input (Voltage < 0.20V)',
+      severity: 'CRITICAL',
+      status: 'ACTIVE',
+      associatedPinIds: ['ecu-pin-7'],
+    });
+  } else if (isPowerOn && tpsVoltage > 4.80) {
+    dtcs.push({
+      code: 'P0123',
+      system: 'Throttle Position Sensor',
+      description: 'Throttle Position Sensor (G79) Circuit High Input (Voltage > 4.80V)',
+      severity: 'CRITICAL',
+      status: 'ACTIVE',
+      associatedPinIds: ['ecu-pin-7'],
+    });
+  }
+
+  const ectVoltage = nodeVoltages['ecu-pin-9'] !== undefined ? nodeVoltages['ecu-pin-9'] : 1.95;
+  if (isPowerOn && ectVoltage < 0.15) {
+    dtcs.push({
+      code: 'P0117',
+      system: 'Engine Coolant Temperature',
+      description: 'Coolant Temperature Sensor (G62) Circuit Low Input (Short to GND)',
+      severity: 'WARNING',
+      status: 'ACTIVE',
+      associatedPinIds: ['ecu-pin-9'],
+    });
+  } else if (isPowerOn && ectVoltage > 4.85) {
+    dtcs.push({
+      code: 'P0118',
+      system: 'Engine Coolant Temperature',
+      description: 'Coolant Temperature Sensor (G62) Circuit High Input (Open Circuit)',
+      severity: 'WARNING',
+      status: 'ACTIVE',
+      associatedPinIds: ['ecu-pin-9'],
+    });
+  }
+
+  const canHVoltage = nodeVoltages['ecu-pin-13'] !== undefined ? nodeVoltages['ecu-pin-13'] : 2.5;
+  const canLVoltage = nodeVoltages['ecu-pin-14'] !== undefined ? nodeVoltages['ecu-pin-14'] : 2.5;
+  const canDifferential = Math.abs(canHVoltage - canLVoltage);
+  if (isPowerOn && (canHVoltage < 0.3 || canLVoltage < 0.3 || canDifferential > 3.0)) {
+    dtcs.push({
+      code: 'U0001',
+      system: 'CAN Communication Network',
+      description: 'High Speed CAN Communication Bus Malfunction (Bus shorted or terminated incorrectly)',
+      severity: 'CRITICAL',
+      status: 'ACTIVE',
+      associatedPinIds: ['ecu-pin-13', 'ecu-pin-14'],
+    });
   }
 
   return {
     nodeVoltages,
     nodeResistances,
     wireCurrentsMa,
-    supplyCurrentDrawAmps: totalCurrentDrawAmps,
+    supplyCurrentDrawAmps: supplyCurrentDraw,
     isSupplyCurrentTripped,
     activeDTCs: dtcs,
     multimeterReading: {
-      display: mmDisplay,
-      value: mmValue,
-      unit: mmUnit,
-      isOverLimit,
-      isWarning,
-      warningMessage,
-      shouldBeep,
+      display: dmmDisplay,
+      value: dmmVal,
+      unit: dmmUnit,
+      isOverLimit: dmmOverLimit,
+      isWarning: dmmWarning,
+      warningMessage: dmmWarningMsg,
+      shouldBeep: dmmShouldBeep,
     },
   };
 }

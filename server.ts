@@ -20,8 +20,20 @@ async function startServer() {
   app.post('/api/autoelectric/analyze-schematic', async (req, res) => {
     try {
       const { imageBase64, documentName, documentType, regionBox } = req.body;
-      if (!imageBase64 || !documentName || !documentType) {
-        return res.status(400).json({ error: 'Missing required fields' });
+      if (!imageBase64 || typeof imageBase64 !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid imageBase64 payload' });
+      }
+      if (!documentName || typeof documentName !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid documentName' });
+      }
+      if (!documentType || typeof documentType !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid documentType' });
+      }
+
+      // Check decoded size limit (max 8MB)
+      const approxBytes = Math.ceil((imageBase64.length * 3) / 4);
+      if (approxBytes > 8 * 1024 * 1024) {
+        return res.status(413).json({ error: 'Payload exceeds maximum 8MB size limit' });
       }
 
       const provider = getImageAnalysisProvider();
@@ -37,9 +49,10 @@ async function startServer() {
         analysis: result,
         model: result.model,
       });
-    } catch (e) {
-      console.error('Schematic analysis error:', e);
-      res.status(500).json({ error: 'Analysis failed' });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Analysis failed';
+      console.error('Schematic analysis error:', msg);
+      res.status(500).json({ error: 'Image analysis service failure. Manual review remains available.' });
     }
   });
 

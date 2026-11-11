@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Activity, Play, Pause, RotateCcw, Sliders } from 'lucide-react';
+import { SignalGenerator } from '../simulation/signals/SignalGenerator';
 
 interface OscilloscopeProps {
   isPowerOn: boolean;
@@ -25,7 +26,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
     setActiveSignal(selectedSignal);
   }, [selectedSignal]);
 
-  // Live measurements
+  // Live physical measurements calculated from simulation parameters
   let measuredVpp = '0.00 V';
   let measuredFreq = '0.0 Hz';
   let measuredDuty = '0.0 %';
@@ -38,15 +39,15 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
       measuredDuty = '50.0 %';
       measuredVrms = hasCanFault ? '0.00 V' : '2.50 V';
     } else if (activeSignal === 'INJECTOR_PWM') {
-      measuredVpp = hasInjectorFault ? '0.00 V' : '28.00 V';
-      measuredFreq = '50.0 Hz';
-      measuredDuty = '12.5 %';
-      measuredVrms = hasInjectorFault ? '0.00 V' : '11.8 V';
+      measuredVpp = hasInjectorFault ? '0.00 V' : '65.00 V';
+      measuredFreq = hasInjectorFault ? '0.0 Hz' : '20.0 Hz';
+      measuredDuty = hasInjectorFault ? '0.0 %' : '5.0 %';
+      measuredVrms = hasInjectorFault ? '0.00 V' : '12.4 V';
     } else if (activeSignal === 'CRANK_CKP') {
-      measuredVpp = '7.00 V';
-      measuredFreq = '750.0 Hz';
+      measuredVpp = '6.40 V';
+      measuredFreq = '1.20 kHz';
       measuredDuty = '48.5 %';
-      measuredVrms = '2.45 V';
+      measuredVrms = '2.26 V';
     } else if (activeSignal === 'O2_LAMBDA') {
       measuredVpp = '0.80 V';
       measuredFreq = '1.25 Hz';
@@ -62,7 +63,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
 
   useEffect(() => {
     let animFrame: number;
-    let phase = 0;
+    let simTime = 0;
 
     const render = () => {
       const canvas = canvasRef.current;
@@ -132,7 +133,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
       }
 
       if (isRunning) {
-        phase += 0.08 * timeDiv;
+        simTime += 0.0004 * timeDiv;
       }
 
       ctx.lineWidth = 2.5;
@@ -144,9 +145,9 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
         ctx.shadowBlur = 6;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
-          const bit = Math.sin((x * 0.05 * timeDiv) + phase) > 0.1 ? 1 : 0;
-          const vCanH = hasCanFault ? 0.0 : 2.5 + (bit ? 1.0 : 0.0);
-          const y = (height / 2) - ((vCanH - 2.5) * 45 * voltDiv) - 25;
+          const tPoint = simTime + (x * 0.000008 / timeDiv);
+          const sig = SignalGenerator.getCanBusSignals(tPoint, hasCanFault);
+          const y = (height / 2) - ((sig.canHigh - 2.5) * 45 * voltDiv) - 25;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -158,9 +159,9 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
         ctx.shadowBlur = 6;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
-          const bit = Math.sin((x * 0.05 * timeDiv) + phase) > 0.1 ? 1 : 0;
-          const vCanL = hasCanFault ? 0.0 : 2.5 - (bit ? 1.0 : 0.0);
-          const y = (height / 2) - ((vCanL - 2.5) * 45 * voltDiv) + 25;
+          const tPoint = simTime + (x * 0.000008 / timeDiv);
+          const sig = SignalGenerator.getCanBusSignals(tPoint, hasCanFault);
+          const y = (height / 2) - ((sig.canLow - 2.5) * 45 * voltDiv) + 25;
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -171,16 +172,10 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
         ctx.shadowBlur = 6;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
-          const cycle = (x + (phase * 18)) % 140;
-          let v = 12.0;
-          if (hasInjectorFault) {
-            v = 0.0;
-          } else {
-            if (cycle < 35) v = 0.4;
-            else if (cycle < 38) v = 28.0;
-            else v = 12.0;
-          }
-          const y = height - (v * 4.2 * voltDiv) - 20;
+          const tPoint = simTime + (x * 0.00015 / timeDiv);
+          const v = SignalGenerator.getInjectorWaveform(tPoint, hasInjectorFault, 12.6);
+          // Scale 0V - 65V to screen
+          const y = (height - 30) - (v * 3.2 * voltDiv);
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
@@ -191,41 +186,35 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
         ctx.shadowBlur = 6;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
-          const period = (x + (phase * 12)) % 200;
-          let amp = 1.0;
-          if (period > 160) amp = 0.05;
-          const v = Math.sin(x * 0.2 * timeDiv + phase) * amp * 3.5;
-          const y = (height / 2) - (v * 14 * voltDiv);
+          const tPoint = simTime + (x * 0.00008 / timeDiv);
+          const v = SignalGenerator.getCrankshaftVrSignal(tPoint, 1200);
+          const y = (height / 2) - (v * 16 * voltDiv);
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
       } else if (activeSignal === 'O2_LAMBDA') {
-        // Lambda closed loop switching 0.1V - 0.9V at ~1Hz
-        ctx.strokeStyle = '#e879f9';
-        ctx.shadowColor = '#e879f9';
+        ctx.strokeStyle = '#f43f5e';
+        ctx.shadowColor = '#f43f5e';
         ctx.shadowBlur = 6;
         ctx.beginPath();
         for (let x = 0; x < width; x++) {
-          const v = 0.5 + Math.sin(x * 0.02 * timeDiv + phase) * 0.4;
-          const y = (height / 2) - ((v - 0.5) * 90 * voltDiv);
+          const tPoint = simTime + (x * 0.002 / timeDiv);
+          const v = 0.45 + 0.4 * Math.sin(tPoint * 2 * Math.PI * 1.25);
+          const y = (height / 2) - ((v - 0.5) * 120 * voltDiv);
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
       } else {
-        // TPS Analog DC
-        ctx.strokeStyle = '#f59e0b';
-        ctx.shadowColor = '#f59e0b';
+        // TPS_DC analog level
+        ctx.strokeStyle = '#fbbf24';
+        ctx.shadowColor = '#fbbf24';
         ctx.shadowBlur = 6;
         ctx.beginPath();
-        for (let x = 0; x < width; x++) {
-          const noise = (Math.random() - 0.5) * 0.04;
-          const v = 2.4 + noise;
-          const y = (height / 2) - (v * 28 * voltDiv);
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
+        const y = (height - 40) - (2.4 * 35 * voltDiv);
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
         ctx.stroke();
       }
 

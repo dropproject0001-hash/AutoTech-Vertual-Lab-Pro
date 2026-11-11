@@ -129,6 +129,7 @@ interface WiringCanvasProps {
   onAttachProbe: (color: 'red' | 'black', pinId: string, label: string) => void;
   onUpdateComponentState: (compId: string, updates: Record<string, number | boolean | string>) => void;
   isPowerOn: boolean;
+  onOpenEcuPinouts?: () => void;
 }
 
 export const WiringCanvas: React.FC<WiringCanvasProps> = ({
@@ -145,11 +146,14 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
   onAttachProbe,
   onUpdateComponentState,
   isPowerOn,
+  onOpenEcuPinouts,
 }) => {
   const [wireSourcePin, setWireSourcePin] = useState<{ id: string; label: string } | null>(null);
   const [hoveredWireId, setHoveredWireId] = useState<string | null>(null);
   const [activePinMenuId, setActivePinMenuId] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [hoveredEcuPinId, setHoveredEcuPinId] = useState<string | null>(null);
+  const [hoveredCompPinId, setHoveredCompPinId] = useState<string | null>(null);
 
   // Exact Layout Constants for 100% Mathematical Terminal Alignment
   const ECU_BOX_X = 24;
@@ -556,7 +560,18 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                 <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
                 <span className="text-xs font-mono font-bold text-slate-100">ECU BREAKOUT</span>
               </div>
-              <span className="text-[10px] font-mono text-slate-400">ME7.5 1.8T</span>
+              <div className="flex items-center gap-1.5">
+                {onOpenEcuPinouts && (
+                  <button
+                    onClick={onOpenEcuPinouts}
+                    className="text-[9px] font-mono text-cyan-400 hover:text-white bg-cyan-950/70 hover:bg-cyan-900 border border-cyan-800 px-1.5 py-0.5 rounded transition"
+                    title="Inspect Actual ECU Connector Socket & Pinout Tracking"
+                  >
+                    Socket View
+                  </button>
+                )}
+                <span className="text-[10px] font-mono text-slate-400">ME7.5 1.8T</span>
+              </div>
             </div>
 
             {/* Pin Rows */}
@@ -577,7 +592,12 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                 if (pin.category === 'communication') categoryBg = 'border-indigo-800 text-indigo-300 bg-indigo-950/40';
 
                 return (
-                  <div key={pin.id} className="relative h-[32px]">
+                  <div
+                    key={pin.id}
+                    className="relative h-[32px]"
+                    onMouseEnter={() => setHoveredEcuPinId(pin.id)}
+                    onMouseLeave={() => setHoveredEcuPinId(null)}
+                  >
                     <div
                       onClick={() => handlePinAction(pin.id, pin.label)}
                       className={`h-full flex items-center justify-between px-2.5 rounded-md border text-[11px] font-mono cursor-pointer transition ${categoryBg} ${
@@ -615,6 +635,79 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                         </div>
                       )}
                     </div>
+
+                    {/* Interactive ECU Pin Tooltip on Hover */}
+                    {hoveredEcuPinId === pin.id && !isMenuOpen && !wireSourcePin && (
+                      <div
+                        className="absolute left-[244px] top-1/2 -translate-y-1/2 z-40 w-64 bg-slate-900 border border-cyan-500/80 rounded-lg p-2.5 shadow-2xl pointer-events-none transition-all duration-150"
+                        style={{
+                          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.8), 0 0 15px rgba(6, 182, 212, 0.25)',
+                        }}
+                      >
+                        {/* Header: Pin Number, Label, Category */}
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-5 h-5 rounded bg-cyan-950 border border-cyan-500/60 font-bold flex items-center justify-center text-cyan-300 text-[10px]">
+                              #{pin.pinNumber}
+                            </span>
+                            <span className="font-bold text-slate-100 text-xs tracking-tight">
+                              {pin.label}
+                            </span>
+                          </div>
+                          <span className="text-[9px] font-semibold uppercase text-cyan-400 bg-cyan-950/70 border border-cyan-800/80 px-1.5 py-0.5 rounded">
+                            {pin.category.replace('_', ' ')}
+                          </span>
+                        </div>
+
+                        {/* Full Pin Name */}
+                        <div className="text-[11px] font-semibold text-slate-200 mb-1 leading-tight">
+                          {pin.name}
+                        </div>
+
+                        {/* Purpose / Description */}
+                        <div className="text-[10px] text-slate-400 font-sans leading-relaxed mb-2">
+                          <strong className="text-slate-300 font-mono text-[9px] uppercase tracking-wider block">PURPOSE:</strong>
+                          {pin.description}
+                        </div>
+
+                        {/* Voltage & Electrical Stats */}
+                        <div className="bg-slate-950 p-1.5 rounded border border-slate-800 flex items-center justify-between text-[10px] mb-1.5">
+                          <div className="flex flex-col">
+                            <span className="text-[9px] text-slate-500 uppercase tracking-wider">CURRENT VOLTAGE</span>
+                            <span className="text-amber-400 font-bold text-xs tabular-nums">
+                              {v.toFixed(2)} V
+                            </span>
+                          </div>
+                          <div className="flex flex-col text-right">
+                            <span className="text-[9px] text-slate-500 uppercase tracking-wider">NOMINAL / IMPEDANCE</span>
+                            <span className="text-slate-300 font-medium text-[10px] tabular-nums">
+                              {pin.nominalVoltage.toFixed(1)}V · {pin.internalResistance >= 1000 ? `${(pin.internalResistance / 1000).toFixed(1)}kΩ` : `${pin.internalResistance}Ω`}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Multimeter Probes Indicator */}
+                        {(isRedProbe || isBlackProbe) && (
+                          <div className="flex flex-col gap-0.5 text-[9px] border-t border-slate-800/80 pt-1">
+                            {isRedProbe && (
+                              <span className="text-rose-400 font-semibold flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                                Red Multimeter Probe (+) Attached
+                              </span>
+                            )}
+                            {isBlackProbe && (
+                              <span className="text-slate-300 font-semibold flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                Black COM Multimeter Probe (-) Attached
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Indicator Pointer */}
+                        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-slate-900 border-l border-b border-cyan-500/80 rotate-45" />
+                      </div>
+                    )}
 
                     {/* Contextual Pin Menu Popover */}
                     {isMenuOpen && (
@@ -686,7 +779,12 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                   const isBlackProbe = multimeter.blackProbe.attachedToPinId === cp.id;
 
                   return (
-                    <div key={cp.id} className="relative h-[30px]">
+                    <div
+                      key={cp.id}
+                      className="relative h-[30px]"
+                      onMouseEnter={() => setHoveredCompPinId(cp.id)}
+                      onMouseLeave={() => setHoveredCompPinId(null)}
+                    >
                       <div
                         onClick={() => handlePinAction(cp.id, `${comp.name}: ${cp.label}`)}
                         className={`h-full flex items-center justify-between px-2 rounded border text-[10px] font-mono cursor-pointer transition bg-slate-950 ${
@@ -719,6 +817,31 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                           </div>
                         )}
                       </div>
+
+                      {/* Interactive Component Pin Tooltip on Hover */}
+                      {hoveredCompPinId === cp.id && !isMenuOpen && !wireSourcePin && (
+                        <div
+                          className="absolute left-[236px] top-1/2 -translate-y-1/2 z-40 w-56 bg-slate-900 border border-slate-700 rounded-lg p-2 shadow-2xl pointer-events-none transition-all duration-150"
+                          style={{
+                            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.8), 0 0 10px rgba(59, 130, 246, 0.2)',
+                          }}
+                        >
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-1 mb-1">
+                            <span className="font-bold text-slate-100 text-[11px] truncate">{comp.name}</span>
+                            <span className="text-[9px] uppercase font-semibold text-cyan-400 bg-cyan-950/70 px-1 rounded border border-cyan-800/60">
+                              {cp.type}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-300 font-semibold mb-1">
+                            Terminal: {cp.label}
+                          </div>
+                          <div className="bg-slate-950 p-1.5 rounded border border-slate-800 flex items-center justify-between text-[10px]">
+                            <span className="text-[9px] text-slate-500 uppercase">CURRENT VOLTAGE:</span>
+                            <span className="text-amber-400 font-bold tabular-nums">{v.toFixed(2)} V</span>
+                          </div>
+                          <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-slate-900 border-l border-b border-slate-700 rotate-45" />
+                        </div>
+                      )}
 
                       {/* Component Contextual Menu */}
                       {isMenuOpen && (
