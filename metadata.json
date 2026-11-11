@@ -1,0 +1,6 @@
+{
+  "name": "Virtual ECU Lab",
+  "description": "An interactive wiring diagram engine and virtual ECU bench testing laboratory for electrical diagnostics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
