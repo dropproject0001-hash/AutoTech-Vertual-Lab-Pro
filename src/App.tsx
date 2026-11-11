@@ -21,6 +21,7 @@ import { WiringCanvas } from './components/WiringCanvas';
 import { Oscilloscope } from './components/Oscilloscope';
 import { SchematicPcbScanner } from './components/SchematicPcbScanner';
 import { EcuConnectorPinouts } from './components/EcuConnectorPinouts';
+import { IntroductionModal } from './components/IntroductionModal';
 import {
   Zap,
   Activity,
@@ -32,12 +33,16 @@ import {
   Sliders,
   Radio,
   SlidersHorizontal,
+  HelpCircle,
 } from 'lucide-react';
 
 type LabTab = 'BENCH_LAB' | 'WIRING_DIAGRAM' | 'ECU_PINOUT' | 'OSCILLOSCOPE' | 'PCB_SCANNER';
 type RackFilter = 'ALL' | 'DMM_POWER' | 'FAULT_MATRIX';
 
 export default function App() {
+  // Introduction View Modal (opens automatically on initial app launch)
+  const [showIntroModal, setShowIntroModal] = useState(true);
+
   // Navigation
   const [activeTab, setActiveTab] = useState<LabTab>('BENCH_LAB');
   const [rackFilter, setRackFilter] = useState<RackFilter>('ALL');
@@ -161,23 +166,25 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-[#07090e] text-slate-100 font-sans select-none overflow-hidden">
       {/* 1. Strict 3-Zone Top Navigation Bar */}
-      <header className="h-12 border-b border-slate-800 bg-slate-950 px-5 flex items-center justify-between gap-8 text-xs font-mono shrink-0">
-        {/* Zone 1: Wordmark */}
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="w-6 h-6 rounded bg-cyan-600/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-            <Radio className="w-3.5 h-3.5" />
-          </div>
-          <span className="font-bold tracking-tight text-slate-100 text-sm whitespace-nowrap">
-            Autoelectric Lab
+      <header className="min-h-12 border-b border-slate-800 bg-slate-950 px-2.5 sm:px-5 py-1.5 sm:py-0 flex items-center justify-between gap-2 sm:gap-6 text-xs font-mono shrink-0 overflow-x-auto scrollbar-none">
+        {/* Zone 1: Official Logo & Brand Header */}
+        <div className="flex items-center gap-2 shrink-0">
+          <img
+            src="/assets/aistudio/file_0000000098d48211abb177ce752b7b0e_62980da7.png"
+            alt="AutoElectric Lab Pro Official Logo"
+            className="h-7 sm:h-8 w-auto object-contain rounded border border-cyan-500/50 shadow-md transition-transform hover:scale-105"
+          />
+          <span className="font-bold tracking-tight text-slate-100 text-xs sm:text-sm whitespace-nowrap">
+            AutoElectric Lab Pro
           </span>
           <span className="text-slate-500 text-xs hidden lg:inline">· ECU Bench Testbed</span>
         </div>
 
-        {/* Zone 2: Navigation Links (Single-Line Segmented Control) */}
-        <nav className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800">
+        {/* Zone 2: Navigation Links (Scrollable Segmented Control) */}
+        <nav className="flex items-center gap-1 bg-slate-900 p-0.5 sm:p-1 rounded-lg border border-slate-800 overflow-x-auto scrollbar-none shrink-0 max-w-full">
           <button
             onClick={() => setActiveTab('BENCH_LAB')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
               activeTab === 'BENCH_LAB'
                 ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -187,7 +194,7 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab('WIRING_DIAGRAM')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
               activeTab === 'WIRING_DIAGRAM'
                 ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -197,17 +204,17 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab('ECU_PINOUT')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
               activeTab === 'ECU_PINOUT'
                 ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            ECU Pinouts & Socket
+            ECU Pinouts
           </button>
           <button
             onClick={() => setActiveTab('OSCILLOSCOPE')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
               activeTab === 'OSCILLOSCOPE'
                 ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -217,19 +224,19 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab('PCB_SCANNER')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition ${
               activeTab === 'PCB_SCANNER'
                 ? 'bg-cyan-600 text-white shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            PCB / AI Scanner
+            PCB Scanner
           </button>
         </nav>
 
         {/* Zone 3: Primary Actions & Telemetry Status */}
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="hidden md:flex items-center gap-2 text-[11px] text-slate-400">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          <div className="hidden xl:flex items-center gap-2 text-[11px] text-slate-400">
             <span>DRAW:</span>
             <span className="text-amber-400 font-bold tabular-nums">
               {circuitSolution.supplyCurrentDrawAmps.toFixed(2)} A
@@ -247,23 +254,33 @@ export default function App() {
           </div>
 
           <button
+            onClick={() => setShowIntroModal(true)}
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-semibold text-cyan-300 bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-700/80 rounded-lg transition whitespace-nowrap shrink-0 shadow-sm"
+            title="View Instructions & Executive Credentials"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden xs:inline">Guide & Credits</span>
+            <span className="xs:hidden">Credits</span>
+          </button>
+
+          <button
             onClick={handleResetLab}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition whitespace-nowrap shrink-0"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition whitespace-nowrap shrink-0"
             title="Reset Bench to Factory Setup"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Bench</span>
+            <span className="hidden sm:inline">Reset Bench</span>
           </button>
         </div>
       </header>
 
       {/* 2. Main Workspace Layout */}
-      <div className="flex-1 overflow-hidden p-3.5 flex gap-3.5">
+      <div className="flex-1 overflow-y-auto md:overflow-hidden p-2 sm:p-3.5 flex gap-2.5 sm:gap-3.5">
         {/* TAB 1: BENCH LAB */}
         {activeTab === 'BENCH_LAB' && (
-          <div className="flex-1 flex gap-3.5 overflow-hidden">
+          <div className="flex-1 flex flex-col md:flex-row gap-2.5 sm:gap-3.5 overflow-y-auto md:overflow-hidden min-h-0">
             {/* Left Instrument Column with Ergonomic Filter Tabs */}
-            <div className="w-[390px] flex flex-col gap-2.5 overflow-hidden shrink-0">
+            <div className="w-full md:w-[390px] flex flex-col gap-2.5 shrink-0 overflow-y-auto md:overflow-hidden max-h-[50vh] md:max-h-none">
               {/* Rack View Filter Tabs */}
               <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-[11px] font-mono shrink-0">
                 <button
@@ -449,17 +466,17 @@ export default function App() {
       </div>
 
       {/* 3. Bottom Laboratory Status & Quick Probe Bar */}
-      <footer className="h-9 border-t border-slate-800 bg-slate-950 px-4 flex items-center justify-between text-[11px] font-mono shrink-0 text-slate-400">
-        <div className="flex items-center gap-4 truncate">
+      <footer className="min-h-10 border-t border-slate-800 bg-slate-950 px-2.5 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[10px] sm:text-[11px] font-mono shrink-0 text-slate-400">
+        <div className="flex items-center gap-2 sm:gap-4 flex-wrap truncate">
           <span className="truncate">
-            TARGET PIN: <strong className="text-cyan-300">{selectedPin ? `${selectedPin.label} (#${selectedPin.pinNumber})` : 'None'}</strong>
+            TARGET: <strong className="text-cyan-300">{selectedPin ? `${selectedPin.label} (#${selectedPin.pinNumber})` : 'None'}</strong>
           </span>
-          <span className="text-slate-700">|</span>
+          <span className="text-slate-700 hidden xs:inline">|</span>
           <span className="whitespace-nowrap">
-            DMM READING: <strong className="text-amber-300 font-bold">{circuitSolution.multimeterReading.display} {circuitSolution.multimeterReading.unit}</strong>
+            DMM: <strong className="text-amber-300 font-bold">{circuitSolution.multimeterReading.display} {circuitSolution.multimeterReading.unit}</strong>
           </span>
-          <span className="text-slate-700 hidden sm:inline">|</span>
-          <span className="whitespace-nowrap hidden sm:inline">
+          <span className="text-slate-700 hidden md:inline">|</span>
+          <span className="whitespace-nowrap hidden md:inline">
             HARNESS: <strong className="text-slate-200">{wires.filter(w => !w.isCut).length} Active / {wires.length} Wires</strong>
           </span>
         </div>
@@ -475,9 +492,9 @@ export default function App() {
                 }));
               }
             }}
-            className="text-[10px] text-rose-300 hover:text-white flex items-center gap-1 bg-rose-950/60 hover:bg-rose-900/60 px-2.5 py-1 rounded border border-rose-800/80 transition"
+            className="text-[10px] text-rose-300 hover:text-white flex items-center gap-1 bg-rose-950/60 hover:bg-rose-900/60 px-2 py-1 rounded border border-rose-800/80 transition"
           >
-            Attach Red Probe (+)
+            Attach Red (+)
           </button>
           <button
             onClick={() => {
@@ -486,12 +503,18 @@ export default function App() {
                 blackProbe: { attachedToPinId: 'chassis-gnd', attachedLabel: 'Chassis GND (KL31)' },
               }));
             }}
-            className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1 bg-slate-900 hover:bg-slate-800 px-2.5 py-1 rounded border border-slate-700 transition"
+            className="text-[10px] text-slate-300 hover:text-white flex items-center gap-1 bg-slate-900 hover:bg-slate-800 px-2 py-1 rounded border border-slate-700 transition"
           >
-            Clip Black COM to GND
+            Black COM (-)
           </button>
         </div>
       </footer>
+
+      {/* Auto-Trigger Introduction & Executive Credentials View Modal */}
+      <IntroductionModal
+        isOpen={showIntroModal}
+        onClose={() => setShowIntroModal(false)}
+      />
     </div>
   );
 }

@@ -348,8 +348,10 @@ export const SchematicPcbScanner: React.FC = () => {
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [selectedCompRef, setSelectedCompRef] = useState<string | null>('U1');
   const [activeNetId, setActiveNetId] = useState<string | null>('NET_5V_REGULATED');
+  const [selectedPinNumber, setSelectedPinNumber] = useState<number | null>(5); // Default U1-VOUT Pin 5
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMode, setFilterMode] = useState<'ALL' | 'VERIFIED' | 'UNVERIFIED'>('ALL');
+  const [mobileTab, setMobileTab] = useState<'CANVAS' | 'DRAWER'>('CANVAS');
 
   // Layer Visibility
   const [showComponents, setShowComponents] = useState(true);
@@ -531,9 +533,11 @@ export const SchematicPcbScanner: React.FC = () => {
       {/* Top Banner Toolbar */}
       <div className="flex flex-wrap items-center justify-between border-b border-slate-800 p-2.5 bg-slate-900 text-xs gap-2">
         <div className="flex items-center gap-3">
-          <div className="w-6 h-6 rounded bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-            <Cpu className="w-3.5 h-3.5" />
-          </div>
+          <img
+            src="/assets/aistudio/file_0000000098d48211abb177ce752b7b0e_62980da7.png"
+            alt="AutoElectric Lab Pro Official Logo"
+            className="h-7 w-auto object-contain rounded border border-cyan-500/40 shadow-sm"
+          />
           <span className="font-bold text-slate-100 tracking-wide whitespace-nowrap">
             PCB VISION & AUTO TRACK MAPPER
           </span>
@@ -589,10 +593,34 @@ export const SchematicPcbScanner: React.FC = () => {
         </div>
       </div>
 
+      {/* Mobile Segmented Control Switcher (Visible on mobile screens < md) */}
+      <div className="flex md:hidden items-center bg-slate-900 p-1 border-b border-slate-800 text-xs font-mono shrink-0">
+        <button
+          onClick={() => setMobileTab('CANVAS')}
+          className={`flex-1 py-1.5 rounded-md text-center transition font-semibold flex items-center justify-center gap-1.5 ${
+            mobileTab === 'CANVAS' ? 'bg-cyan-600 text-white shadow-sm font-bold' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Cpu className="w-3.5 h-3.5" />
+          <span>PCB Image Canvas</span>
+        </button>
+        <button
+          onClick={() => setMobileTab('DRAWER')}
+          className={`flex-1 py-1.5 rounded-md text-center transition font-semibold flex items-center justify-center gap-1.5 ${
+            mobileTab === 'DRAWER' ? 'bg-cyan-600 text-white shadow-sm font-bold' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Activity className="w-3.5 h-3.5" />
+          <span>Datasheets & Nets ({components.length})</span>
+        </button>
+      </div>
+
       {/* Main Dual Workspace: Interactive PCB Canvas Left + Component Inspector Right */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
         {/* Left: Interactive Canvas */}
-        <div className="flex-1 relative bg-[#070b12] border-r border-slate-800 flex flex-col overflow-hidden">
+        <div className={`flex-1 relative bg-[#070b12] border-r border-slate-800 flex-col overflow-hidden ${
+          mobileTab === 'CANVAS' ? 'flex' : 'hidden md:flex'
+        }`}>
           {/* HUD Layer Controls */}
           <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur border border-slate-800 p-1 rounded-lg text-[11px] text-slate-300 shadow-md">
             <button
@@ -656,14 +684,15 @@ export const SchematicPcbScanner: React.FC = () => {
               style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center' }}
               className="relative w-[720px] h-[480px] bg-[#0c1815] border-4 border-[#16362e] rounded-xl shadow-2xl overflow-hidden select-none transition-transform"
             >
+              {/* Scan Photo or FR4 Board Texture Background */}
               {uploadedImageUrl ? (
                 <img
                   src={uploadedImageUrl}
-                  alt="Uploaded PCB Document"
-                  className="absolute inset-0 w-full h-full object-contain opacity-85"
+                  alt="Uploaded PCB Scan Document"
+                  className="absolute inset-0 w-full h-full object-contain opacity-85 pointer-events-none"
                 />
               ) : (
-                <svg className="absolute inset-0 w-full h-full">
+                <svg className="absolute inset-0 w-full h-full pointer-events-none">
                   {/* FR4 Board Texture & Copper Ground Pour */}
                   <rect width="100%" height="100%" fill="#0a1d18" />
                   <circle cx="360" cy="240" r="230" fill="#0d2b23" opacity="0.4" />
@@ -676,56 +705,78 @@ export const SchematicPcbScanner: React.FC = () => {
                   <text x="60" y="88" fill="#2d6d5d" fontSize="9" fontFamily="monospace">
                     TOP LAYER SILKSCREEN · 1oz COPPER · AUTOMOTIVE GRADE AEC-Q100
                   </text>
+                </svg>
+              )}
 
-                  {/* Neon Copper Traces Layer */}
-                  {showNets &&
-                    nets.map(net => {
-                      const isNetActive = activeNetId === net.name;
-                      const neonColor = getNetColor(net.name);
-                      const points = net.tracePoints.map(p => `${p.x},${p.y}`).join(' ');
+              {/* Neon Copper Traces SVG Overlay Layer (ALWAYS RENDERED AS VISUAL OVERLAY OVER PCB SCAN IMAGE) */}
+              {showNets && (
+                <svg className="absolute inset-0 w-full h-full z-10 pointer-events-none">
+                  {nets.map(net => {
+                    const isNetActive = activeNetId === net.name;
+                    const neonColor = getNetColor(net.name);
+                    const points = net.tracePoints.map(p => `${p.x},${p.y}`).join(' ');
 
-                      return (
-                        <g
-                          key={net.name}
-                          onClick={() => setActiveNetId(net.name)}
-                          className="cursor-pointer group/net"
-                        >
-                          {/* Glow background stroke */}
-                          <polyline
-                            points={points}
-                            fill="none"
-                            stroke={neonColor}
-                            strokeWidth={isNetActive ? '8' : '4'}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            opacity={isNetActive ? '0.95' : '0.4'}
-                            style={{ filter: isNetActive ? `drop-shadow(0 0 8px ${neonColor})` : 'none' }}
-                          />
-                          {/* Bright core line */}
-                          <polyline
-                            points={points}
-                            fill="none"
-                            stroke="#ffffff"
-                            strokeWidth={isNetActive ? '2.5' : '1.5'}
-                            strokeLinecap="round"
-                            opacity={isNetActive ? '1.0' : '0.7'}
-                          />
-                          {/* Terminal Node Pads */}
-                          {showPinMarkers &&
-                            net.tracePoints.map((p, idx) => (
-                              <circle
-                                key={idx}
-                                cx={p.x}
-                                cy={p.y}
-                                r={isNetActive ? '6.5' : '4.5'}
-                                fill={neonColor}
-                                stroke="#ffffff"
-                                strokeWidth="1.5"
-                              />
-                            ))}
-                        </g>
-                      );
-                    })}
+                    return (
+                      <g
+                        key={net.name}
+                        onClick={e => {
+                          e.stopPropagation();
+                          setActiveNetId(net.name);
+                          setStatusMessage(`NET PATH HIGHLIGHTED: [${net.name}] connecting components: ${net.connectedComponentRefs.join(', ')}`);
+                        }}
+                        className="cursor-pointer pointer-events-auto group/net"
+                      >
+                        {/* Wide hit area for trace clicking */}
+                        <polyline
+                          points={points}
+                          fill="none"
+                          stroke="transparent"
+                          strokeWidth="22"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        {/* Glow background stroke */}
+                        <polyline
+                          points={points}
+                          fill="none"
+                          stroke={isNetActive ? '#00f3ff' : neonColor}
+                          strokeWidth={isNetActive ? '10' : '4'}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          opacity={isNetActive ? '1.0' : '0.5'}
+                          style={{
+                            filter: isNetActive
+                              ? 'drop-shadow(0 0 14px #00f3ff) drop-shadow(0 0 24px #00f3ff)'
+                              : `drop-shadow(0 0 6px ${neonColor})`,
+                          }}
+                          className={isNetActive ? 'animate-pulse' : ''}
+                        />
+                        {/* Bright core line */}
+                        <polyline
+                          points={points}
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth={isNetActive ? '3' : '1.5'}
+                          strokeLinecap="round"
+                          opacity={isNetActive ? '1.0' : '0.8'}
+                        />
+                        {/* Terminal Node Pads */}
+                        {showPinMarkers &&
+                          net.tracePoints.map((p, idx) => (
+                            <circle
+                              key={idx}
+                              cx={p.x}
+                              cy={p.y}
+                              r={isNetActive ? '8' : '4.5'}
+                              fill={isNetActive ? '#00f3ff' : neonColor}
+                              stroke="#ffffff"
+                              strokeWidth="2"
+                              className={isNetActive ? 'animate-pulse' : ''}
+                            />
+                          ))}
+                      </g>
+                    );
+                  })}
                 </svg>
               )}
 
@@ -734,6 +785,11 @@ export const SchematicPcbScanner: React.FC = () => {
                 components.map(comp => {
                   const isSelected = selectedCompRef === comp.refDes;
                   const isVerified = comp.verificationStatus === 'VERIFIED';
+                  const activeNetObj = nets.find(n => n.name === activeNetId);
+                  const isCompInActiveNet = activeNetId
+                    ? comp.pinSpecs?.some(p => p.connectedNetId === activeNetId) ||
+                      activeNetObj?.connectedComponentRefs.includes(comp.refDes)
+                    : false;
 
                   const top = comp.bbox.ymin;
                   const left = comp.bbox.xmin;
@@ -752,6 +808,7 @@ export const SchematicPcbScanner: React.FC = () => {
                         setSelectedCompRef(comp.refDes);
                         if (comp.pinSpecs?.[0]?.connectedNetId) {
                           setActiveNetId(comp.pinSpecs[0].connectedNetId);
+                          setSelectedPinNumber(comp.pinSpecs[0].pinNumber);
                         }
                       }}
                       onKeyDown={e => {
@@ -760,6 +817,7 @@ export const SchematicPcbScanner: React.FC = () => {
                           setSelectedCompRef(comp.refDes);
                           if (comp.pinSpecs?.[0]?.connectedNetId) {
                             setActiveNetId(comp.pinSpecs[0].connectedNetId);
+                            setSelectedPinNumber(comp.pinSpecs[0].pinNumber);
                           }
                         }
                       }}
@@ -767,27 +825,72 @@ export const SchematicPcbScanner: React.FC = () => {
                       className={`group/comp absolute cursor-pointer border-2 transition-all flex flex-col justify-between p-1.5 rounded-md focus:outline-none ${
                         isSelected
                           ? 'border-cyan-400 bg-cyan-950/80 shadow-2xl ring-4 ring-cyan-400/50 z-30 scale-[1.02]'
+                          : isCompInActiveNet
+                          ? 'border-cyan-400 bg-cyan-950/90 shadow-[0_0_24px_rgba(0,243,255,0.7)] ring-2 ring-cyan-300 z-20 scale-[1.01]'
                           : isVerified
                           ? 'border-emerald-500/80 bg-emerald-950/40 hover:border-emerald-400 hover:scale-[1.01] focus-visible:ring-2 focus-visible:ring-emerald-400'
                           : 'border-amber-500/80 bg-amber-950/30 hover:border-amber-400 hover:scale-[1.01] focus-visible:ring-2 focus-visible:ring-amber-400'
                       }`}
                     >
                       <div className="flex items-center justify-between text-[10px] font-mono font-bold leading-none">
-                        <span className={isSelected ? 'text-cyan-300 font-extrabold' : isVerified ? 'text-emerald-300' : 'text-amber-300'}>
+                        <span className={isSelected || isCompInActiveNet ? 'text-cyan-300 font-extrabold' : isVerified ? 'text-emerald-300' : 'text-amber-300'}>
                           {comp.refDes}
                         </span>
-                        {isVerified ? (
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <span className="text-[8px] text-amber-400 bg-amber-950/90 px-1 py-0.2 rounded border border-amber-800">
-                            AI
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {isCompInActiveNet && (
+                            <span className="text-[7.5px] bg-cyan-400 text-black px-1 py-0.2 rounded font-extrabold animate-pulse">
+                              NET
+                            </span>
+                          )}
+                          {isVerified ? (
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <span className="text-[8px] text-amber-400 bg-amber-950/90 px-1 py-0.2 rounded border border-amber-800">
+                              AI
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="text-[9.5px] font-mono truncate text-slate-100 font-semibold leading-tight">
                         {comp.marking || comp.category}
                       </div>
+
+                      {/* Component Pin Terminal Nodes for Net Path Selection */}
+                      {comp.pinSpecs && comp.pinSpecs.length > 0 && (
+                        <div className="flex items-center gap-0.5 flex-wrap mt-1 pt-1 border-t border-slate-800/80">
+                          {comp.pinSpecs.map(pin => {
+                            const isPinSelected = selectedPinNumber === pin.pinNumber && selectedCompRef === comp.refDes;
+                            const isPinNetActive = activeNetId === pin.connectedNetId;
+                            return (
+                              <button
+                                key={pin.pinNumber}
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setSelectedCompRef(comp.refDes);
+                                  setSelectedPinNumber(pin.pinNumber);
+                                  setActiveNetId(pin.connectedNetId);
+                                  const connectedNet = nets.find(n => n.name === pin.connectedNetId);
+                                  const nodes = connectedNet ? connectedNet.connectedComponentRefs.join(', ') : comp.refDes;
+                                  setStatusMessage(
+                                    `PIN #${pin.pinNumber} (${pin.pinName}) SELECTED · Highlighting net [${pin.connectedNetId}] across: ${nodes}`
+                                  );
+                                }}
+                                title={`Pin #${pin.pinNumber} (${pin.pinName}) -> Net: ${pin.connectedNetId}`}
+                                className={`px-1 py-0.2 rounded text-[7.5px] font-mono font-bold transition-all flex items-center ${
+                                  isPinSelected
+                                    ? 'bg-cyan-300 text-black ring-2 ring-white font-extrabold scale-110 shadow-[0_0_8px_#00f3ff]'
+                                    : isPinNetActive
+                                    ? 'bg-cyan-950 text-cyan-200 border border-cyan-400 animate-pulse'
+                                    : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-700'
+                                }`}
+                              >
+                                <span>#{pin.pinNumber}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
 
                       {/* Interactive Hover-Based Contextual Component Specification Tooltip */}
                       <div
@@ -844,7 +947,9 @@ export const SchematicPcbScanner: React.FC = () => {
         </div>
 
         {/* Right: Inspection & Component Datasheet Drawer */}
-        <aside className="w-96 bg-slate-900 p-3.5 flex flex-col gap-3 overflow-y-auto text-xs font-mono border-l border-slate-800 shrink-0">
+        <aside className={`w-full md:w-96 bg-slate-900 p-2.5 sm:p-3.5 flex-col gap-3 overflow-y-auto text-xs font-mono border-t md:border-t-0 md:border-l border-slate-800 shrink-0 ${
+          mobileTab === 'DRAWER' ? 'flex' : 'hidden md:flex'
+        }`}>
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <span className="font-bold text-slate-100 flex items-center gap-1.5">
               <Activity className="w-4 h-4 text-cyan-400" /> COMPONENT DATASHEET & PINOUTS
@@ -927,20 +1032,39 @@ export const SchematicPcbScanner: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60 font-mono">
-                        {selectedComponent.pinSpecs.map(pin => (
-                          <tr
-                            key={pin.pinNumber}
-                            onClick={() => setActiveNetId(pin.connectedNetId)}
-                            className={`cursor-pointer transition ${
-                              activeNetId === pin.connectedNetId ? 'bg-cyan-950/70 text-cyan-200' : 'hover:bg-slate-900/60 text-slate-300'
-                            }`}
-                          >
-                            <td className="p-1.5 font-bold text-slate-400">#{pin.pinNumber}</td>
-                            <td className="p-1.5 font-semibold text-slate-200">{pin.pinName}</td>
-                            <td className="p-1.5 text-amber-300 tabular-nums">{pin.nominalVoltage.toFixed(1)}V</td>
-                            <td className="p-1.5 text-cyan-400 truncate max-w-[90px]">{pin.connectedNetId}</td>
-                          </tr>
-                        ))}
+                        {selectedComponent.pinSpecs.map(pin => {
+                          const isPinSelected = selectedPinNumber === pin.pinNumber && selectedCompRef === selectedComponent.refDes;
+                          const isPinNetActive = activeNetId === pin.connectedNetId;
+                          return (
+                            <tr
+                              key={pin.pinNumber}
+                              onClick={() => {
+                                setSelectedPinNumber(pin.pinNumber);
+                                setActiveNetId(pin.connectedNetId);
+                                const connectedNet = nets.find(n => n.name === pin.connectedNetId);
+                                const nodes = connectedNet ? connectedNet.connectedComponentRefs.join(', ') : selectedComponent.refDes;
+                                setStatusMessage(
+                                  `PIN #${pin.pinNumber} (${pin.pinName}) SELECTED · Highlighting net [${pin.connectedNetId}] across: ${nodes}`
+                                );
+                              }}
+                              className={`cursor-pointer transition ${
+                                isPinSelected
+                                  ? 'bg-cyan-950 border-l-4 border-cyan-400 text-cyan-200 font-bold shadow-sm'
+                                  : isPinNetActive
+                                  ? 'bg-cyan-950/50 text-cyan-300'
+                                  : 'hover:bg-slate-900/60 text-slate-300'
+                              }`}
+                            >
+                              <td className="p-1.5 font-bold text-slate-300 flex items-center gap-1">
+                                <span className={isPinSelected ? 'text-cyan-400 font-extrabold' : 'text-slate-400'}>#{pin.pinNumber}</span>
+                                {isPinSelected && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
+                              </td>
+                              <td className="p-1.5 font-semibold text-slate-200">{pin.pinName}</td>
+                              <td className="p-1.5 text-amber-300 tabular-nums">{pin.nominalVoltage.toFixed(1)}V</td>
+                              <td className="p-1.5 text-cyan-400 truncate max-w-[90px]">{pin.connectedNetId}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
