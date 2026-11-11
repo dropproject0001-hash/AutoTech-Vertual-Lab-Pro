@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { EcuPin, WireConnection, BenchComponent, MultimeterState } from '../types/ecu';
 import {
   Scissors,
@@ -15,6 +15,105 @@ import {
   Check,
   X,
 } from 'lucide-react';
+import { playProbeTapSound } from '../utils/audioFeedback';
+
+interface AnimatedCoordsState {
+  coords: { x: number; y: number } | null;
+  isMoving: boolean;
+  justLanded: boolean;
+  tiltAngle: number;
+}
+
+function useAnimatedCoords(
+  target: { x: number; y: number } | null,
+  color: 'red' | 'black'
+): AnimatedCoordsState {
+  const [coords, setCoords] = useState<{ x: number; y: number } | null>(target);
+  const [isMoving, setIsMoving] = useState(false);
+  const [justLanded, setJustLanded] = useState(false);
+  const [tiltAngle, setTiltAngle] = useState(0);
+
+  const prevTargetRef = useRef<{ x: number; y: number } | null>(target);
+  const animFrameRef = useRef<number | null>(null);
+  const landTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const prev = prevTargetRef.current;
+
+    // Same target
+    if (prev?.x === target?.x && prev?.y === target?.y) {
+      return;
+    }
+
+    // First mount or connecting from unconnected state
+    if (!prev || !target) {
+      setCoords(target);
+      prevTargetRef.current = target;
+      if (target) {
+        setJustLanded(true);
+        playProbeTapSound();
+        if (landTimerRef.current) clearTimeout(landTimerRef.current);
+        landTimerRef.current = setTimeout(() => setJustLanded(false), 450);
+      }
+      return;
+    }
+
+    // Moving between two distinct pins: simulate technician lifting and seating the probe
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (landTimerRef.current) clearTimeout(landTimerRef.current);
+
+    const startX = coords?.x ?? prev.x;
+    const startY = coords?.y ?? prev.y;
+    const destX = target.x;
+    const destY = target.y;
+    const startTime = performance.now();
+    const duration = 280; // Physical transition flight duration in ms
+
+    setIsMoving(true);
+    setJustLanded(false);
+
+    const baseDirection = color === 'red' ? -1 : 1;
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, Math.max(0, elapsed / duration));
+      // Cubic bezier ease-out curve: 1 - (1 - progress)^3
+      const ease = 1 - Math.pow(1 - progress, 3);
+
+      const curX = startX + (destX - startX) * ease;
+      const curY = startY + (destY - startY) * ease;
+
+      // Arc lift in angle: lifts up to ~14 degrees during mid-flight leap, then settles to 0
+      const currentTilt = Math.sin(progress * Math.PI) * 14 * baseDirection;
+      setTiltAngle(currentTilt);
+      setCoords({ x: curX, y: curY });
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        setCoords(target);
+        setIsMoving(false);
+        setTiltAngle(0);
+        prevTargetRef.current = target;
+        setJustLanded(true);
+        playProbeTapSound();
+
+        landTimerRef.current = setTimeout(() => {
+          setJustLanded(false);
+        }, 450);
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (landTimerRef.current) clearTimeout(landTimerRef.current);
+    };
+  }, [target?.x, target?.y, color]);
+
+  return { coords, isMoving, justLanded, tiltAngle };
+}
 
 interface WiringCanvasProps {
   pins: EcuPin[];
@@ -104,13 +203,16 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
     }
   };
 
-  // Get coordinates for probes
-  const redCoords = multimeter.redProbe.attachedToPinId
+  // Get coordinates for probes and connect physics animation hook
+  const targetRedCoords = multimeter.redProbe.attachedToPinId
     ? getPinCoords(multimeter.redProbe.attachedToPinId)
     : null;
-  const blackCoords = multimeter.blackProbe.attachedToPinId
+  const targetBlackCoords = multimeter.blackProbe.attachedToPinId
     ? getPinCoords(multimeter.blackProbe.attachedToPinId)
     : null;
+
+  const redAnimated = useAnimatedCoords(targetRedCoords, 'red');
+  const blackAnimated = useAnimatedCoords(targetBlackCoords, 'black');
 
   return (
     <div className="relative flex-1 bg-slate-950 border border-slate-800 rounded-lg overflow-hidden flex flex-col select-none shadow-inner">
@@ -287,47 +389,152 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
               );
             })}
 
-            {/* Virtual Multimeter Red Probe Cable Lead */}
-            {redCoords && (
+            {/* Virtual Multimeter Red Probe Cable Lead with Physical Motion */}
+            {redAnimated.coords && (
               <g className="pointer-events-none">
+                {/* Touchdown Contact Ripple / Spark Effect */}
+                {redAnimated.justLanded && (
+                  <g transform={`translate(${redAnimated.coords.x}, ${redAnimated.coords.y})`}>
+                    <circle
+                      r="16"
+                      fill="#ef4444"
+                      fillOpacity="0.25"
+                      stroke="#ef4444"
+                      strokeWidth="2.5"
+                      className="animate-probe-tap"
+                    />
+                    <circle r="4" fill="#ffffff" />
+                  </g>
+                )}
+
+                {/* Flexible silicone test lead wire originating from Red DMM terminal */}
                 <path
-                  d={`M 15 20 C 15 ${redCoords.y - 40}, ${redCoords.x - 60} ${redCoords.y}, ${redCoords.x} ${redCoords.y}`}
+                  d={`M 15 20 C 15 ${redAnimated.coords.y * 0.45 + 30}, ${redAnimated.coords.x - 70} ${redAnimated.coords.y - 12}, ${redAnimated.coords.x - 28} ${redAnimated.coords.y}`}
                   fill="none"
                   stroke="#ef4444"
                   strokeWidth="3.5"
                   strokeLinecap="round"
-                  opacity="0.85"
+                  opacity="0.9"
+                  style={{
+                    filter: 'drop-shadow(0 2px 5px rgba(239, 68, 68, 0.4))',
+                  }}
                 />
-                <circle cx={redCoords.x} cy={redCoords.y} r="6" fill="#ef4444" stroke="#ffffff" strokeWidth="2" />
-                <circle cx={redCoords.x} cy={redCoords.y} r="2" fill="#ffffff" />
-                {/* Needle Probe Tip Graphic */}
-                <g transform={`translate(${redCoords.x}, ${redCoords.y})`}>
-                  <line x1="-16" y1="-8" x2="0" y2="0" stroke="#f87171" strokeWidth="3" />
-                  <text x="10" y="-8" fill="#f87171" fontSize="10" fontFamily="monospace" fontWeight="bold">
-                    [+] RED DMM
-                  </text>
+
+                {/* Probe Handle & Needle assembly with physical tilt and contact point */}
+                <g
+                  transform={`translate(${redAnimated.coords.x}, ${redAnimated.coords.y}) rotate(${redAnimated.tiltAngle})`}
+                  className="transition-transform duration-75"
+                >
+                  {/* Flexible strain-relief boot */}
+                  <rect x="-35" y="-3" width="7" height="6" rx="1.5" fill="#7f1d1d" stroke="#991b1b" strokeWidth="0.8" />
+                  {/* Ergonomic Fluke-style probe body */}
+                  <rect x="-28" y="-4.5" width="18" height="9" rx="2" fill="#dc2626" stroke="#fca5a5" strokeWidth="0.8" />
+                  {/* Grip ridges */}
+                  <line x1="-24" y1="-3" x2="-24" y2="3" stroke="#991b1b" strokeWidth="1" />
+                  <line x1="-20" y1="-3" x2="-20" y2="3" stroke="#991b1b" strokeWidth="1" />
+                  <line x1="-16" y1="-3" x2="-16" y2="3" stroke="#991b1b" strokeWidth="1" />
+                  {/* Finger safety barrier flange */}
+                  <rect x="-11" y="-6.5" width="2.5" height="13" rx="1" fill="#991b1b" stroke="#f87171" strokeWidth="0.5" />
+                  {/* Hardened probe needle shaft */}
+                  <line x1="-8.5" y1="0" x2="-2" y2="0" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
+                  {/* Sharp needle tip seated into terminal jack */}
+                  <polygon points="-2,-1 0,0 -2,1" fill="#f8fafc" />
+
+                  {/* Terminal contact point indicator */}
+                  <circle cx="0" cy="0" r="3.5" fill="#ef4444" stroke="#ffffff" strokeWidth="1.5" />
+
+                  {/* High-visibility probe status badge */}
+                  <g transform="translate(-10, -22)">
+                    <rect
+                      x="-2"
+                      y="-12"
+                      width="92"
+                      height="18"
+                      rx="3.5"
+                      fill="#090d16"
+                      stroke="#ef4444"
+                      strokeWidth="1.2"
+                      opacity="0.95"
+                    />
+                    <text x="5" y="1" fill="#fca5a5" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                      [+] RED PROBE
+                    </text>
+                  </g>
                 </g>
               </g>
             )}
 
-            {/* Virtual Multimeter Black Probe Cable Lead */}
-            {blackCoords && (
+            {/* Virtual Multimeter Black Probe Cable Lead with Physical Motion */}
+            {blackAnimated.coords && (
               <g className="pointer-events-none">
+                {/* Touchdown Contact Ripple / Spark Effect */}
+                {blackAnimated.justLanded && (
+                  <g transform={`translate(${blackAnimated.coords.x}, ${blackAnimated.coords.y})`}>
+                    <circle
+                      r="16"
+                      fill="#38bdf8"
+                      fillOpacity="0.25"
+                      stroke="#38bdf8"
+                      strokeWidth="2.5"
+                      className="animate-probe-tap"
+                    />
+                    <circle r="4" fill="#ffffff" />
+                  </g>
+                )}
+
+                {/* Flexible silicone COM lead wire originating from COM terminal at (15, 670) */}
                 <path
-                  d={`M 15 670 C 15 ${blackCoords.y + 40}, ${blackCoords.x - 60} ${blackCoords.y}, ${blackCoords.x} ${blackCoords.y}`}
+                  d={`M 15 670 C 15 ${blackAnimated.coords.y * 0.6 + 250}, ${blackAnimated.coords.x - 70} ${blackAnimated.coords.y + 12}, ${blackAnimated.coords.x - 28} ${blackAnimated.coords.y}`}
                   fill="none"
                   stroke="#64748b"
                   strokeWidth="3.5"
                   strokeLinecap="round"
-                  opacity="0.85"
+                  opacity="0.9"
+                  style={{
+                    filter: 'drop-shadow(0 2px 5px rgba(100, 116, 139, 0.4))',
+                  }}
                 />
-                <circle cx={blackCoords.x} cy={blackCoords.y} r="6" fill="#1e293b" stroke="#cbd5e1" strokeWidth="2" />
-                <circle cx={blackCoords.x} cy={blackCoords.y} r="2" fill="#ffffff" />
-                <g transform={`translate(${blackCoords.x}, ${blackCoords.y})`}>
-                  <line x1="-16" y1="8" x2="0" y2="0" stroke="#94a3b8" strokeWidth="3" />
-                  <text x="10" y="14" fill="#cbd5e1" fontSize="10" fontFamily="monospace" fontWeight="bold">
-                    [-] COM DMM
-                  </text>
+
+                {/* Probe Handle & Needle assembly */}
+                <g
+                  transform={`translate(${blackAnimated.coords.x}, ${blackAnimated.coords.y}) rotate(${blackAnimated.tiltAngle})`}
+                  className="transition-transform duration-75"
+                >
+                  {/* Flexible strain-relief boot */}
+                  <rect x="-35" y="-3" width="7" height="6" rx="1.5" fill="#0f172a" stroke="#334155" strokeWidth="0.8" />
+                  {/* Ergonomic probe body */}
+                  <rect x="-28" y="-4.5" width="18" height="9" rx="2" fill="#1e293b" stroke="#94a3b8" strokeWidth="0.8" />
+                  {/* Grip ridges */}
+                  <line x1="-24" y1="-3" x2="-24" y2="3" stroke="#0f172a" strokeWidth="1" />
+                  <line x1="-20" y1="-3" x2="-20" y2="3" stroke="#0f172a" strokeWidth="1" />
+                  <line x1="-16" y1="-3" x2="-16" y2="3" stroke="#0f172a" strokeWidth="1" />
+                  {/* Finger safety barrier flange */}
+                  <rect x="-11" y="-6.5" width="2.5" height="13" rx="1" fill="#0f172a" stroke="#64748b" strokeWidth="0.5" />
+                  {/* Hardened probe needle shaft */}
+                  <line x1="-8.5" y1="0" x2="-2" y2="0" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" />
+                  {/* Sharp steel needle tip seated into terminal jack */}
+                  <polygon points="-2,-1 0,0 -2,1" fill="#e2e8f0" />
+
+                  {/* Terminal contact point indicator */}
+                  <circle cx="0" cy="0" r="3.5" fill="#475569" stroke="#cbd5e1" strokeWidth="1.5" />
+
+                  {/* High-visibility probe status badge */}
+                  <g transform="translate(-10, 16)">
+                    <rect
+                      x="-2"
+                      y="-1"
+                      width="92"
+                      height="18"
+                      rx="3.5"
+                      fill="#090d16"
+                      stroke="#64748b"
+                      strokeWidth="1.2"
+                      opacity="0.95"
+                    />
+                    <text x="5" y="12" fill="#cbd5e1" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                      [-] COM DMM
+                    </text>
+                  </g>
                 </g>
               </g>
             )}
@@ -386,13 +593,17 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                         <span className="text-[10px] tabular-nums text-slate-400">{v.toFixed(1)}V</span>
                         {/* Terminal Jack Circle */}
                         <div
-                          className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center transition ${
+                          className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all ${
                             isWireSource
                               ? 'bg-amber-400 border-white'
+                              : isRedProbe
+                              ? 'bg-rose-500 border-white ring-2 ring-rose-400 animate-pulse shadow-sm shadow-rose-500/50'
+                              : isBlackProbe
+                              ? 'bg-slate-700 border-white ring-2 ring-slate-400 animate-pulse shadow-sm shadow-slate-400/50'
                               : 'bg-slate-800 border-slate-600 group-hover:border-cyan-400'
                           }`}
                         >
-                          <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />
+                          <div className={`w-1.5 h-1.5 rounded-full ${isRedProbe ? 'bg-white' : isBlackProbe ? 'bg-slate-200' : 'bg-slate-950'}`} />
                         </div>
                       </div>
 
@@ -485,11 +696,17 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                         <div className="flex items-center gap-2">
                           {/* Left Terminal Jack */}
                           <div
-                            className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center transition ${
-                              isWireSource ? 'bg-amber-400 border-white' : 'bg-slate-800 border-slate-600'
+                            className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center transition-all ${
+                              isWireSource
+                                ? 'bg-amber-400 border-white'
+                                : isRedProbe
+                                ? 'bg-rose-500 border-white ring-2 ring-rose-400 animate-pulse shadow-sm shadow-rose-500/50'
+                                : isBlackProbe
+                                ? 'bg-slate-700 border-white ring-2 ring-slate-400 animate-pulse shadow-sm shadow-slate-400/50'
+                                : 'bg-slate-800 border-slate-600'
                             }`}
                           >
-                            <div className="w-1.5 h-1.5 rounded-full bg-slate-950" />
+                            <div className={`w-1.5 h-1.5 rounded-full ${isRedProbe ? 'bg-white' : isBlackProbe ? 'bg-slate-200' : 'bg-slate-950'}`} />
                           </div>
                           <span>{cp.label}</span>
                         </div>
