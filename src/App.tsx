@@ -22,6 +22,7 @@ import { Oscilloscope } from './components/Oscilloscope';
 import { SchematicPcbScanner } from './components/SchematicPcbScanner';
 import { EcuConnectorPinouts } from './components/EcuConnectorPinouts';
 import { IntroductionModal } from './components/IntroductionModal';
+import { EcuRepairKnowledgeBase } from './components/EcuRepairKnowledgeBase';
 import {
   Zap,
   Activity,
@@ -34,9 +35,10 @@ import {
   Radio,
   SlidersHorizontal,
   HelpCircle,
+  BookOpen,
 } from 'lucide-react';
 
-type LabTab = 'BENCH_LAB' | 'WIRING_DIAGRAM' | 'ECU_PINOUT' | 'OSCILLOSCOPE' | 'PCB_SCANNER';
+type LabTab = 'BENCH_LAB' | 'WIRING_DIAGRAM' | 'ECU_PINOUT' | 'OSCILLOSCOPE' | 'PCB_SCANNER' | 'REPAIR_GUIDE';
 type RackFilter = 'ALL' | 'DMM_POWER' | 'FAULT_MATRIX';
 
 export default function App() {
@@ -46,6 +48,7 @@ export default function App() {
   // Navigation
   const [activeTab, setActiveTab] = useState<LabTab>('BENCH_LAB');
   const [rackFilter, setRackFilter] = useState<RackFilter>('ALL');
+  const [simulationSpeed, setSimulationSpeed] = useState<number>(1.0);
 
   // Core Bench State
   const [powerSupply, setPowerSupply] = useState<PowerSupplyState>({
@@ -232,6 +235,17 @@ export default function App() {
           >
             PCB Scanner
           </button>
+          <button
+            onClick={() => setActiveTab('REPAIR_GUIDE')}
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-[11px] sm:text-xs font-medium rounded-md whitespace-nowrap shrink-0 transition flex items-center gap-1 ${
+              activeTab === 'REPAIR_GUIDE'
+                ? 'bg-cyan-600 text-white shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Repair Manuals</span>
+          </button>
         </nav>
 
         {/* Zone 3: Primary Actions & Telemetry Status */}
@@ -251,6 +265,22 @@ export default function App() {
                 <CheckCircle2 className="w-3.5 h-3.5" /> NOMINAL
               </span>
             )}
+          </div>
+
+          {/* Global Simulation Speed Control */}
+          <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 text-xs">
+            <span className="text-[10px] text-slate-400 font-bold whitespace-nowrap hidden sm:inline">SIM SPEED:</span>
+            <select
+              value={simulationSpeed}
+              onChange={e => setSimulationSpeed(parseFloat(e.target.value))}
+              className="bg-slate-950 border border-slate-700 text-cyan-300 font-bold rounded px-2 py-0.5 text-[11px] focus:outline-none cursor-pointer"
+            >
+              <option value="0.25">0.25x Slow-Mo</option>
+              <option value="0.5">0.5x Slow</option>
+              <option value="1.0">1.0x Realtime</option>
+              <option value="2.0">2.0x Fast</option>
+              <option value="4.0">4.0x Turbo</option>
+            </select>
           </div>
 
           <button
@@ -368,6 +398,7 @@ export default function App() {
               onUpdateComponentState={handleUpdateComponentState}
               isPowerOn={powerSupply.isOutputEnabled}
               onOpenEcuPinouts={() => setActiveTab('ECU_PINOUT')}
+              simulationSpeed={simulationSpeed}
             />
           </div>
         )}
@@ -396,6 +427,7 @@ export default function App() {
               onUpdateComponentState={handleUpdateComponentState}
               isPowerOn={powerSupply.isOutputEnabled}
               onOpenEcuPinouts={() => setActiveTab('ECU_PINOUT')}
+              simulationSpeed={simulationSpeed}
             />
           </div>
         )}
@@ -429,6 +461,7 @@ export default function App() {
               selectedSignal={hasCanFault ? 'CAN_BUS' : 'INJECTOR_PWM'}
               hasCanFault={hasCanFault}
               hasInjectorFault={hasInjectorFault}
+              simulationSpeed={simulationSpeed}
             />
             {/* Split with Wiring Canvas for rapid testing */}
             <div className="flex-1 min-h-[360px] overflow-hidden">
@@ -452,6 +485,7 @@ export default function App() {
                 }}
                 onUpdateComponentState={handleUpdateComponentState}
                 isPowerOn={powerSupply.isOutputEnabled}
+                simulationSpeed={simulationSpeed}
               />
             </div>
           </div>
@@ -461,6 +495,13 @@ export default function App() {
         {activeTab === 'PCB_SCANNER' && (
           <div className="flex-1 flex overflow-hidden">
             <SchematicPcbScanner />
+          </div>
+        )}
+
+        {/* TAB 5: ECU REPAIR KNOWLEDGE BASE & MANUALS */}
+        {activeTab === 'REPAIR_GUIDE' && (
+          <div className="flex-1 flex overflow-hidden">
+            <EcuRepairKnowledgeBase />
           </div>
         )}
       </div>

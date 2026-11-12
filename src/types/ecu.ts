@@ -46,6 +46,7 @@ export interface BenchComponent {
     nominalVoltage?: number;
   }[];
   state?: Record<string, number | boolean | string>;
+  notes?: string;
 }
 
 export type MultimeterMode = 'V_DC' | 'V_AC' | 'RESISTANCE' | 'CONTINUITY' | 'FREQUENCY' | 'DIODE';

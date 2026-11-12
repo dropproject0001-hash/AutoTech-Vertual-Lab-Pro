@@ -14,6 +14,7 @@ import {
   Flame,
   Check,
   X,
+  ArrowRight,
 } from 'lucide-react';
 import { playProbeTapSound } from '../utils/audioFeedback';
 
@@ -122,7 +123,7 @@ interface WiringCanvasProps {
   nodeVoltages: Record<string, number>;
   selectedPinId: string | null;
   onSelectPin: (pinId: string) => void;
-  onAddWire: (sourcePinId: string, targetPinId: string) => void;
+  onAddWire: (sourcePinId: string, targetPinId: string, color?: string, label?: string) => void;
   onToggleCutWire: (wireId: string) => void;
   onDeleteWire: (wireId: string) => void;
   multimeter: MultimeterState;
@@ -130,7 +131,20 @@ interface WiringCanvasProps {
   onUpdateComponentState: (compId: string, updates: Record<string, number | boolean | string>) => void;
   isPowerOn: boolean;
   onOpenEcuPinouts?: () => void;
+  simulationSpeed?: number;
 }
+
+const AUTOMOTIVE_WIRE_COLORS = [
+  { name: 'Red (+12V Power / KL30)', hex: '#ef4444', category: 'power' },
+  { name: 'Brown (Ground / KL31)', hex: '#78350f', category: 'ground' },
+  { name: 'Violet (Ignition Wake / KL15)', hex: '#a855f7', category: 'ignition' },
+  { name: 'Yellow (5V Sensor VREF)', hex: '#eab308', category: 'reference' },
+  { name: 'Green (Signal / K-Line)', hex: '#22c55e', category: 'signal' },
+  { name: 'Orange (CAN High Bus)', hex: '#f97316', category: 'comms' },
+  { name: 'Blue (Injector / Actuator Drive)', hex: '#3b82f6', category: 'actuator' },
+  { name: 'Black (Chassis Earth Return)', hex: '#1e293b', category: 'ground' },
+  { name: 'White (Auxiliary / Data)', hex: '#cbd5e1', category: 'aux' },
+];
 
 export const WiringCanvas: React.FC<WiringCanvasProps> = ({
   pins,
@@ -147,6 +161,7 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
   onUpdateComponentState,
   isPowerOn,
   onOpenEcuPinouts,
+  simulationSpeed = 1.0,
 }) => {
   const [wireSourcePin, setWireSourcePin] = useState<{ id: string; label: string } | null>(null);
   const [hoveredWireId, setHoveredWireId] = useState<string | null>(null);
@@ -154,6 +169,16 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [hoveredEcuPinId, setHoveredEcuPinId] = useState<string | null>(null);
   const [hoveredCompPinId, setHoveredCompPinId] = useState<string | null>(null);
+
+  // Pending wire creation state for color selector modal
+  const [pendingWire, setPendingWire] = useState<{
+    sourceId: string;
+    sourceLabel: string;
+    targetId: string;
+    targetLabel: string;
+  } | null>(null);
+  const [selectedWireColor, setSelectedWireColor] = useState<string>('#ef4444');
+  const [selectedWireLabel, setSelectedWireLabel] = useState<string>('Automotive Harness Wire');
 
   // Exact Layout Constants for 100% Mathematical Terminal Alignment
   const ECU_BOX_X = 24;
@@ -200,7 +225,22 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
 
     if (wireSourcePin) {
       if (wireSourcePin.id !== pinId) {
-        onAddWire(wireSourcePin.id, pinId);
+        let defaultColor = '#ef4444';
+        const l = label.toLowerCase();
+        if (l.includes('gnd') || l.includes('ground') || l.includes('kl31')) defaultColor = '#78350f';
+        else if (l.includes('can')) defaultColor = '#f97316';
+        else if (l.includes('sig') || l.includes('vta') || l.includes('signal')) defaultColor = '#22c55e';
+        else if (l.includes('5v') || l.includes('vref')) defaultColor = '#eab308';
+        else if (l.includes('ign') || l.includes('kl15')) defaultColor = '#a855f7';
+
+        setPendingWire({
+          sourceId: wireSourcePin.id,
+          sourceLabel: wireSourcePin.label,
+          targetId: pinId,
+          targetLabel: label,
+        });
+        setSelectedWireColor(defaultColor);
+        setSelectedWireLabel(`${wireSourcePin.label} -> ${label}`);
       }
       setWireSourcePin(null);
       setActivePinMenuId(null);
@@ -336,19 +376,40 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
                     className="transition-all"
                   />
 
-                  {/* Animated electron current flow (when powered & continuous) */}
-                  {isPowerOn && !wire.isCut && (
-                    <path
-                      d={pathD}
-                      fill="none"
-                      stroke="#ffffff"
-                      strokeWidth="1.5"
-                      strokeDasharray="4,18"
-                      strokeDashoffset="0"
-                      className="animate-pulse"
-                      opacity="0.75"
-                    />
-                  )}
+                  {/* Animated electron current flow particles (when powered & continuous based on voltage) */}
+                  {(() => {
+                    const srcVolt = nodeVoltages[wire.sourcePinId] ?? 0;
+                    const tgtVolt = nodeVoltages[wire.targetPinId] ?? 0;
+                    const avgVolt = (srcVolt + tgtVolt) / 2;
+                    const isEnergized = isPowerOn && !wire.isCut && avgVolt > 0.4;
+
+                    if (!isEnergized) return null;
+
+                    return (
+                      <g className="pointer-events-none">
+                        {/* Energy glow stream */}
+                        <path
+                          d={pathD}
+                          fill="none"
+                          stroke={avgVolt > 10 ? '#38bdf8' : '#eab308'}
+                          strokeWidth="4.5"
+                          opacity="0.35"
+                          filter="url(#wireGlow)"
+                        />
+                        {/* Moving electron pulse particles */}
+                        <path
+                          d={pathD}
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth="2"
+                          strokeDasharray="6,24"
+                          className="animate-electron-flow"
+                          style={{ animationDuration: `${0.75 / simulationSpeed}s` }}
+                          opacity="0.95"
+                        />
+                      </g>
+                    );
+                  })()}
 
                   {/* Terminal Connection Beads */}
                   <circle cx={start.x} cy={start.y} r="3.5" fill={wire.isCut ? '#475569' : wire.color} />
@@ -980,6 +1041,99 @@ export const WiringCanvas: React.FC<WiringCanvasProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Wire Color Selector Modal Dialog */}
+      {pendingWire && (
+        <div className="absolute inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border-2 border-cyan-500 rounded-xl p-5 max-w-md w-full shadow-2xl flex flex-col gap-4 font-mono">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-sm font-bold text-slate-100 uppercase tracking-wide">
+                  New Harness Wire Connection
+                </h3>
+              </div>
+              <button
+                onClick={() => setPendingWire(null)}
+                className="text-slate-400 hover:text-white p-1 rounded"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between">
+                <div>
+                  <span className="text-[9px] text-slate-500 block">SOURCE TERMINAL</span>
+                  <span className="font-bold text-cyan-300">{pendingWire.sourceLabel}</span>
+                </div>
+                <ArrowRight className="w-4 h-4 text-slate-500" />
+                <div className="text-right">
+                  <span className="text-[9px] text-slate-500 block">TARGET TERMINAL</span>
+                  <span className="font-bold text-amber-300">{pendingWire.targetLabel}</span>
+                </div>
+              </div>
+
+              {/* Wire Label Input */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-slate-400 font-bold uppercase">Wire Harness Label / Circuit Note:</label>
+                <input
+                  type="text"
+                  value={selectedWireLabel}
+                  onChange={e => setSelectedWireLabel(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              {/* Automotive Standard Color Selector Dropdown / Grid */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] text-slate-400 font-bold uppercase">
+                  Automotive Wire Color Standard:
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto p-1 bg-slate-950 rounded-lg border border-slate-800">
+                  {AUTOMOTIVE_WIRE_COLORS.map(c => (
+                    <button
+                      key={c.hex}
+                      onClick={() => setSelectedWireColor(c.hex)}
+                      className={`flex items-center gap-2 p-2 rounded-lg border text-left transition cursor-pointer ${
+                        selectedWireColor === c.hex
+                          ? 'bg-cyan-950/80 border-cyan-400 text-white shadow-sm ring-1 ring-cyan-400/40'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="w-4 h-4 rounded-full border border-white/40 shrink-0" style={{ backgroundColor: c.hex }} />
+                      <div className="flex flex-col truncate">
+                        <span className="font-bold text-[11px] truncate">{c.name.split(' ')[0]}</span>
+                        <span className="text-[9px] text-slate-400 truncate">{c.name.split('(')[1]?.replace(')', '') || c.category}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setPendingWire(null)}
+                className="px-3 py-1.5 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onAddWire(pendingWire.sourceId, pendingWire.targetId, selectedWireColor, selectedWireLabel);
+                  setPendingWire(null);
+                }}
+                className="px-4 py-1.5 text-xs rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold flex items-center gap-1.5 shadow-md cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                <span>Route Color-Coded Wire</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

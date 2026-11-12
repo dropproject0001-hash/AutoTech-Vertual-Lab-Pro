@@ -7,6 +7,7 @@ interface OscilloscopeProps {
   selectedSignal: 'CAN_BUS' | 'INJECTOR_PWM' | 'CRANK_CKP' | 'TPS_DC' | 'O2_LAMBDA';
   hasCanFault: boolean;
   hasInjectorFault: boolean;
+  simulationSpeed?: number;
 }
 
 export const Oscilloscope: React.FC<OscilloscopeProps> = ({
@@ -14,6 +15,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
   selectedSignal,
   hasCanFault,
   hasInjectorFault,
+  simulationSpeed = 1.0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -133,7 +135,7 @@ export const Oscilloscope: React.FC<OscilloscopeProps> = ({
       }
 
       if (isRunning) {
-        simTime += 0.0004 * timeDiv;
+        simTime += 0.0004 * timeDiv * simulationSpeed;
       }
 
       ctx.lineWidth = 2.5;
